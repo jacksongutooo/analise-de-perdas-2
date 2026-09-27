@@ -4,7 +4,7 @@ import { linesFromPdfDocument, readCsvRows } from "../../../lib/extraction/reade
 import { looksReadable, openWithPdfJs, simplePdfLines } from "../runtime/pdf";
 
 export { linesFromPdfDocument, readCsvRows };
-export type { PdfDocumentLike } from "../../../src/lib/extraction/readers";
+export type { PdfDocumentLike } from "../../../lib/extraction/readers";
 
 export async function readXlsxSheets(): Promise<unknown[][][]> {
   throw new Error("Na prévia, planilhas XLSX não são lidas automaticamente (no site real, são).");
