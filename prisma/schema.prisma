@@ -1,0 +1,569 @@
+// Banco de dados: PostgreSQL.
+// Valores monetários em DECIMAL(14,2), em reais. Os três conceitos de valor
+// (declarado, identificado e validado) ficam em colunas separadas e nunca se misturam.
+// CPF: somente os 11 dígitos, sem máscara. Nunca é gravado em registros de acesso.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum BetType {
+  sports
+  casino
+  both
+
+  @@map("bet_type")
+}
+
+enum UsagePeriod {
+  up_to_3m
+  from_3_to_6m
+  from_6_to_12m
+  over_12m
+
+  @@map("usage_period")
+}
+
+/// Etapa 5: se as apostas saíram do controle (resposta do cliente). Casos anteriores ficam sem resposta.
+enum ControlLoss {
+  yes
+  sometimes
+  no
+
+  @@map("control_loss")
+}
+
+enum CaseStatus {
+  submitted
+  documents_received
+  under_review
+  additional_documents
+  eligible
+  not_eligible
+  completed
+  awaiting_payment
+  payment_confirmed
+
+  @@map("case_status")
+}
+
+enum DocumentStatus {
+  pending
+  valid
+  divergent
+  illegible
+  duplicate
+  manual_review
+  in_review
+  invalid
+  complement_required
+  cpf_mismatch
+
+  @@map("document_status")
+}
+
+/// Conferência do CPF do documento com o CPF cadastrado.
+enum CpfCheckStatus {
+  pending
+  match
+  mismatch
+  manual_match
+
+  @@map("cpf_check_status")
+}
+
+enum PaymentStatus {
+  not_applicable
+  pending
+  awaiting_confirmation
+  confirmed
+
+  @@map("payment_status")
+}
+
+enum DocumentCategory {
+  comprovabet
+  deposit_history
+  withdrawal_history
+  financial_history
+  bet_history
+  bank_statement
+  pix_receipt
+  other
+
+  @@map("document_category")
+}
+
+enum ExtractionStatus {
+  not_started
+  processing
+  done
+  failed
+  unsupported
+
+  @@map("extraction_status")
+}
+
+enum TransactionType {
+  deposit
+  withdrawal
+  balance
+  other
+
+  @@map("transaction_type")
+}
+
+enum ValueSource {
+  auto
+  manual
+
+  @@map("value_source")
+}
+
+enum AdminRole {
+  admin
+  analyst
+
+  @@map("admin_role")
+}
+
+enum RequestStatus {
+  open
+  fulfilled
+  cancelled
+
+  @@map("request_status")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  fullName  String   @map("full_name")
+  /// Somente dígitos. Nulo em cadastros anteriores à exigência do CPF.
+  cpf       String?
+  email     String
+  whatsapp  String
+  isAdult   Boolean  @map("is_adult")
+  isDemo    Boolean  @default(false) @map("is_demo")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  cases Case[]
+
+  @@index([email])
+  @@index([cpf])
+  @@map("users")
+}
+
+model BettingPlatform {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  isCustom  Boolean  @default(false) @map("is_custom")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  cases     CasePlatform[]
+  documents Document[]
+
+  @@map("betting_platforms")
+}
+
+model Case {
+  id                    String        @id @default(cuid())
+  protocol              String        @unique
+  userId                String        @map("user_id")
+  betType               BetType       @map("bet_type")
+  sportsBetKind         String?       @map("sports_bet_kind")
+  casinoGames           String[]      @default([]) @map("casino_games")
+  mainLossArea          String?       @map("main_loss_area")
+  period                UsagePeriod
+  controlLoss           ControlLoss?  @map("control_loss")
+  situations            String[]      @default([])
+  situationOther        String?       @map("situation_other")
+  declaredDeposits      Decimal       @map("declared_deposits") @db.Decimal(14, 2)
+  declaredWithdrawals   Decimal       @map("declared_withdrawals") @db.Decimal(14, 2)
+  declaredBalance       Decimal       @default(0) @map("declared_balance") @db.Decimal(14, 2)
+  declaredLoss          Decimal       @map("declared_loss") @db.Decimal(14, 2)
+  declaredNeedsReview   Boolean       @default(false) @map("declared_needs_review")
+  identifiedDeposits    Decimal?      @map("identified_deposits") @db.Decimal(14, 2)
+  identifiedWithdrawals Decimal?      @map("identified_withdrawals") @db.Decimal(14, 2)
+  identifiedBalance     Decimal?      @map("identified_balance") @db.Decimal(14, 2)
+  identifiedLoss        Decimal?      @map("identified_loss") @db.Decimal(14, 2)
+  identifiedSource      ValueSource?  @map("identified_source")
+  validatedLoss         Decimal?      @map("validated_loss") @db.Decimal(14, 2)
+  status                CaseStatus    @default(submitted)
+  /// Casos anteriores ao pagamento da análise ficam como "not_applicable".
+  paymentStatus         PaymentStatus @default(pending) @map("payment_status")
+  paymentConfirmedAt    DateTime?     @map("payment_confirmed_at")
+  paymentConfirmedById  String?       @map("payment_confirmed_by_id")
+  paymentReference      String?       @map("payment_reference")
+  /// Pré-análise automática do ComprovaBet no envio (aprovado, conferência pela equipe ou pendência).
+  preAnalysis           Json?         @map("pre_analysis")
+  assignedAdminId       String?       @map("assigned_admin_id")
+  nextSteps             String?       @map("next_steps")
+  privacyConsentAt      DateTime      @map("privacy_consent_at")
+  privacyConsentIp      String?       @map("privacy_consent_ip")
+  isDemo                Boolean       @default(false) @map("is_demo")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+  reviewDeadline        DateTime      @map("review_deadline")
+
+  user               User                   @relation(fields: [userId], references: [id])
+  assignedAdmin      AdminUser?             @relation("CaseAssignee", fields: [assignedAdminId], references: [id])
+  paymentConfirmedBy AdminUser?             @relation("CasePaymentConfirmer", fields: [paymentConfirmedById], references: [id])
+  platforms          CasePlatform[]
+  declarations       FinancialDeclaration[]
+  documents          Document[]
+  transactions       DocumentTransaction[]
+  reviews            CaseReview[]
+  notes              CaseNote[]
+  statusHistory      StatusHistory[]
+  commitment         VoluntaryCommitment?
+  requests           DocumentRequest[]
+  draft              CaseDraft?
+  agreements         ServiceAgreement[]
+  payments           Payment[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([isDemo])
+  @@map("cases")
+}
+
+model CasePlatform {
+  id         String @id @default(cuid())
+  caseId     String @map("case_id")
+  platformId String @map("platform_id")
+
+  case     Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  platform BettingPlatform @relation(fields: [platformId], references: [id])
+
+  @@unique([caseId, platformId])
+  @@index([platformId])
+  @@map("case_platforms")
+}
+
+model FinancialDeclaration {
+  id             String   @id @default(cuid())
+  caseId         String   @map("case_id")
+  deposits       Decimal  @db.Decimal(14, 2)
+  withdrawals    Decimal  @db.Decimal(14, 2)
+  hasBalance     Boolean  @map("has_balance")
+  balance        Decimal  @default(0) @db.Decimal(14, 2)
+  rawResult      Decimal  @map("raw_result") @db.Decimal(14, 2)
+  calculatedLoss Decimal  @map("calculated_loss") @db.Decimal(14, 2)
+  needsReview    Boolean  @default(false) @map("needs_review")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("financial_declarations")
+}
+
+model CaseDraft {
+  id              String    @id @default(cuid())
+  tokenHash       String    @map("token_hash")
+  /// CPF informado no formulário, usado na conferência do ComprovaBet. Apagado no envio final.
+  cpf             String?
+  isDemo          Boolean   @default(false) @map("is_demo")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  expiresAt       DateTime  @map("expires_at")
+  submittedAt     DateTime? @map("submitted_at")
+  caseId          String?   @unique @map("case_id")
+  /// Respostas do formulário gravadas ao iniciar o pagamento: com o pagamento aprovado, a solicitação
+  /// é concluída mesmo que o cliente não volte ao site. Apagadas no envio final.
+  answers         Json?
+  /// Aceite das condições do serviço, feito na tela de pagamento (copiado para o caso no envio).
+  termsAcceptedAt DateTime? @map("terms_accepted_at")
+  termsVersion    String?   @map("terms_version")
+  termsIp         String?   @map("terms_ip")
+  termsUserAgent  String?   @map("terms_user_agent")
+  /// Pré-análise automática do ComprovaBet (resultado da última conferência, antes do pagamento).
+  preAnalysis     Json?     @map("pre_analysis")
+
+  case      Case?      @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  documents Document[]
+  payments  Payment[]
+
+  @@index([expiresAt])
+  @@map("case_drafts")
+}
+
+enum PaymentProvider {
+  mercadopago
+  demo
+
+  @@map("payment_provider")
+}
+
+enum PaymentAttemptStatus {
+  pending
+  approved
+  rejected
+  cancelled
+  refunded
+
+  @@map("payment_attempt_status")
+}
+
+/// Pagamento da análise pelo gateway, feito antes do envio da solicitação. Cada tentativa é um registro.
+model Payment {
+  id                String               @id @default(cuid())
+  draftId           String?              @map("draft_id")
+  caseId            String?              @map("case_id")
+  provider          PaymentProvider
+  status            PaymentAttemptStatus @default(pending)
+  statusDetail      String?              @map("status_detail")
+  amount            Decimal              @db.Decimal(14, 2)
+  /// Meio de pagamento informado pelo gateway (pix, credit_card, debit_card...).
+  method            String?
+  checkoutId        String?              @map("checkout_id")
+  checkoutUrl       String?              @map("checkout_url")
+  providerPaymentId String?              @map("provider_payment_id")
+  paidAt            DateTime?            @map("paid_at")
+  isDemo            Boolean              @default(false) @map("is_demo")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  draft CaseDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  case  Case?      @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([draftId])
+  @@index([caseId])
+  @@map("payments")
+}
+
+model Document {
+  id               String           @id @default(cuid())
+  caseId           String?          @map("case_id")
+  draftId          String?          @map("draft_id")
+  platformId       String?          @map("platform_id")
+  platformName     String?          @map("platform_name")
+  category         DocumentCategory
+  originalName     String           @map("original_name")
+  storageKey       String           @unique @map("storage_key")
+  mimeType         String           @map("mime_type")
+  sizeBytes        Int              @map("size_bytes")
+  sha256           String
+  status           DocumentStatus   @default(pending)
+  uploadedVia      String           @default("form") @map("uploaded_via")
+  requestId        String?          @map("request_id")
+  duplicateOfId    String?          @map("duplicate_of_id")
+  extractionStatus ExtractionStatus @default(not_started) @map("extraction_status")
+  extractionError  String?          @map("extraction_error")
+  extractedSummary Json?            @map("extracted_summary")
+  reviewNote       String?          @map("review_note")
+  cpfCheck         CpfCheckStatus?  @map("cpf_check")
+  cpfCheckNote     String?          @map("cpf_check_note")
+  cpfCheckedAt     DateTime?        @map("cpf_checked_at")
+  referenceYear    Int?             @map("reference_year")
+  /// Resultado da leitura automática feita no envio (texto disponível, anos citados etc.).
+  checkDetails     Json?            @map("check_details")
+  reviewedAt       DateTime?        @map("reviewed_at")
+  reviewedById     String?          @map("reviewed_by_id")
+  isDemo           Boolean          @default(false) @map("is_demo")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  case         Case?                 @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  draft        CaseDraft?            @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  platform     BettingPlatform?      @relation(fields: [platformId], references: [id])
+  request      DocumentRequest?      @relation(fields: [requestId], references: [id])
+  duplicateOf  Document?             @relation("DocumentDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates   Document[]            @relation("DocumentDuplicates")
+  reviewedBy   AdminUser?            @relation(fields: [reviewedById], references: [id])
+  transactions DocumentTransaction[]
+
+  @@index([caseId])
+  @@index([draftId])
+  @@index([sha256])
+  @@map("documents")
+}
+
+model DocumentTransaction {
+  id          String          @id @default(cuid())
+  documentId  String          @map("document_id")
+  caseId      String          @map("case_id")
+  occurredAt  DateTime?       @map("occurred_at")
+  type        TransactionType
+  amount      Decimal         @db.Decimal(14, 2)
+  description String?
+  source      ValueSource     @default(auto)
+  confidence  Float?
+  isDuplicate Boolean         @default(false) @map("is_duplicate")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  case     Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([caseId])
+  @@map("document_transactions")
+}
+
+model CaseReview {
+  id                    String   @id @default(cuid())
+  caseId                String   @map("case_id")
+  adminId               String   @map("admin_id")
+  action                String
+  identifiedDeposits    Decimal? @map("identified_deposits") @db.Decimal(14, 2)
+  identifiedWithdrawals Decimal? @map("identified_withdrawals") @db.Decimal(14, 2)
+  identifiedBalance     Decimal? @map("identified_balance") @db.Decimal(14, 2)
+  identifiedLoss        Decimal? @map("identified_loss") @db.Decimal(14, 2)
+  validatedLoss         Decimal? @map("validated_loss") @db.Decimal(14, 2)
+  comment               String?
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  case  Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  admin AdminUser @relation(fields: [adminId], references: [id])
+
+  @@index([caseId])
+  @@map("case_reviews")
+}
+
+model CaseNote {
+  id        String   @id @default(cuid())
+  caseId    String   @map("case_id")
+  adminId   String   @map("admin_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  case  Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  admin AdminUser @relation(fields: [adminId], references: [id])
+
+  @@index([caseId])
+  @@map("case_notes")
+}
+
+model StatusHistory {
+  id            String      @id @default(cuid())
+  caseId        String      @map("case_id")
+  fromStatus    CaseStatus? @map("from_status")
+  toStatus      CaseStatus  @map("to_status")
+  changedById   String?     @map("changed_by_id")
+  publicMessage String?     @map("public_message")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  case      Case       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  changedBy AdminUser? @relation(fields: [changedById], references: [id])
+
+  @@index([caseId])
+  @@map("status_history")
+}
+
+model VoluntaryCommitment {
+  id          String   @id @default(cuid())
+  caseId      String   @unique @map("case_id")
+  accepted    Boolean  @map("aceite_pausa")
+  acceptedAt  DateTime @map("data_aceite")
+  ip          String?  @map("ip_aceite")
+  userAgent   String?  @map("user_agent")
+  textVersion String   @map("text_version")
+  text        String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@map("voluntary_commitments")
+}
+
+/// Aceite das condições do serviço de análise, registrado antes do pagamento.
+model ServiceAgreement {
+  id           String   @id @default(cuid())
+  caseId       String   @map("case_id")
+  accepted     Boolean
+  acceptedAt   DateTime @map("accepted_at")
+  termsVersion String   @map("terms_version")
+  text         String
+  ip           String?
+  userAgent    String?  @map("user_agent")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("service_agreements")
+}
+
+model DocumentRequest {
+  id            String        @id @default(cuid())
+  caseId        String        @map("case_id")
+  reasons       String[]      @default([])
+  message       String?
+  status        RequestStatus @default(open)
+  requestedById String        @map("requested_by_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  fulfilledAt   DateTime?     @map("fulfilled_at")
+
+  case        Case       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  requestedBy AdminUser  @relation(fields: [requestedById], references: [id])
+  documents   Document[]
+
+  @@index([caseId])
+  @@map("document_requests")
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  role         AdminRole @default(analyst)
+  isActive     Boolean   @default(true) @map("is_active")
+  isDemo       Boolean   @default(false) @map("is_demo")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  sessions          AdminSession[]
+  assignedCases     Case[]            @relation("CaseAssignee")
+  confirmedPayments Case[]            @relation("CasePaymentConfirmer")
+  reviews           CaseReview[]
+  notes             CaseNote[]
+  statusChanges     StatusHistory[]
+  documentRequests  DocumentRequest[]
+  reviewedDocuments Document[]
+  accessLogs        AccessLog[]
+
+  @@map("admin_users")
+}
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  adminId   String   @map("admin_id")
+  tokenHash String   @unique @map("token_hash")
+  ip        String?
+  userAgent String?  @map("user_agent")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  admin AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("admin_sessions")
+}
+
+model AccessLog {
+  id         String   @id @default(cuid())
+  action     String
+  adminId    String?  @map("admin_id")
+  subject    String?
+  targetType String?  @map("target_type")
+  targetId   String?  @map("target_id")
+  ip         String?
+  userAgent  String?  @map("user_agent")
+  success    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  admin AdminUser? @relation(fields: [adminId], references: [id])
+
+  @@index([action, createdAt])
+  @@index([ip])
+  @@map("access_logs")
+}
