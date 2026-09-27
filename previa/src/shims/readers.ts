@@ -1,6 +1,6 @@
 // "@/lib/extraction/readers" na prévia: CSV como no site real; PDF com o leitor da prévia e, se preciso,
 // o pdf.js do CDN; XLSX não é lido automaticamente na prévia (o site real lê).
-import { linesFromPdfDocument, readCsvRows } from "../../../src/lib/extraction/readers";
+import { linesFromPdfDocument, readCsvRows } from "../../../lib/extraction/readers";
 import { looksReadable, openWithPdfJs, simplePdfLines } from "../runtime/pdf";
 
 export { linesFromPdfDocument, readCsvRows };
