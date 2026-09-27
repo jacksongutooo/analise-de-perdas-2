@@ -1,10 +1,10 @@
 // Dados FICTÍCIOS de demonstração. Só roda com DEMO_MODE=true e fora de produção.
 // Os casos ficam em src/lib/demo/seed.ts (compartilhados com a prévia navegável).
 import "../scripts/load-env";
-import { prisma } from "../src/lib/db";
-import { DEMO_PASSWORD, seedDemoData } from "../src/lib/demo/seed";
-import { config } from "../src/lib/env";
-import { getStorage } from "../src/lib/storage";
+import { prisma } from "../lib/db";
+import { DEMO_PASSWORD, seedDemoData } from "../lib/demo/seed";
+import { config } from "../lib/env";
+import { getStorage } from "../lib/storage";
 
 async function wipeDemoData() {
   const storage = await getStorage();
