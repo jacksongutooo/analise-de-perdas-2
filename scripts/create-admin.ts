@@ -3,9 +3,9 @@
 // A senha é pedida no terminal (ou lida de ADMIN_PASSWORD). Mínimo de 12 caracteres.
 import "./load-env";
 import { createInterface } from "node:readline";
-import { prisma } from "../src/lib/db";
-import { isValidEmail } from "../src/lib/format";
-import { hashPassword } from "../src/lib/security";
+import { prisma } from "../lib/db";
+import { isValidEmail } from "../lib/format";
+import { hashPassword } from "../lib/security";
 
 function arg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
