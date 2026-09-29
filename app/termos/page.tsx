@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal";
 import { PAYMENT_NOTICE, SERVICE_TERMS_VERSION } from "@/lib/comprovabet";
+import { MANUAL_SUPPORT_TEXT } from "@/lib/intake";
 import { config } from "@/lib/env";
 import { site } from "@/lib/site";
 
@@ -10,12 +11,11 @@ export const metadata: Metadata = { title: "Termos de Uso" };
 
 export default function TermosPage() {
   const company = site.legalName || site.name;
-  const year = config.comprovabetYear;
   return (
     <LegalPage title="Termos de Uso" updatedAt={`setembro de 2026 · versão ${SERVICE_TERMS_VERSION}`}>
       <p>
         Estes termos regulam o uso do site de {company}
-        {site.cnpj ? ` (CNPJ ${site.cnpj})` : ""} para solicitar a análise documental de perdas em apostas online. Ao enviar uma solicitação, você
+        {site.cnpj ? ` (CNPJ ${site.cnpj})` : ""} para solicitar a análise e o acompanhamento do pedido de estorno de perdas em apostas online. Ao enviar uma solicitação, você
         declara que leu e concorda com estes termos e com a{" "}
         <Link href="/privacidade" className="font-medium text-navy-700 underline">
           Política de Privacidade
@@ -25,65 +25,70 @@ export default function TermosPage() {
 
       <LegalSection title="1. O que é o serviço">
         <p>
-          Realizamos uma análise documental individual das informações e dos documentos enviados por você, para avaliar se existem elementos que
-          permitam prosseguir com o seu caso. A análise não é garantia de resultado.
+          Analisamos e acompanhamos individualmente a sua solicitação, a partir das informações que você informa no formulário e dos documentos
+          que a equipe pedir depois, para avaliar se existem elementos que permitam prosseguir com o seu caso. A análise não é garantia de
+          resultado.
         </p>
         <LegalList
           items={[
             "Cada caso é analisado individualmente.",
+            "O resultado exibido ao fim do formulário depende apenas das respostas informadas por você: não é uma consulta a bases de dados do governo ou das casas de apostas.",
             "O envio das informações não garante recuperação, restituição, indenização ou recebimento de valores.",
-            "Os valores exibidos no acompanhamento (declarado, identificado e validado) são referências da análise documental e não representam valores a serem recuperados.",
-            "O serviço é oferecido de forma independente e não é um serviço oficial ou governamental.",
+            "A faixa de perda e os valores exibidos no acompanhamento (informado, identificado e validado) são referências da análise e não representam valores a serem recuperados.",
+            "O serviço é oferecido de forma independente e não é um serviço oficial ou governamental. As menções a medidas do Governo Federal para o setor de apostas são informativas: o serviço não tem vínculo com o governo e não depende de iniciativas futuras.",
           ]}
         />
       </LegalSection>
 
       <LegalSection title="2. Quem pode usar">
         <p>
-          O serviço é exclusivo para maiores de 18 anos, que enviem informações sobre as próprias contas em plataformas de apostas. Você se
-          compromete a fornecer informações verdadeiras e documentos autênticos, e a não enviar dados de terceiros além do estritamente necessário.
+          O serviço é exclusivo para maiores de 18 anos, que informem dados sobre as próprias contas em casas de apostas. A solicitação é feita uma
+          única vez por CPF: o serviço é para quem nunca pediu o estorno dessas perdas. Você se compromete a fornecer informações verdadeiras e
+          documentos autênticos, e a não enviar dados de terceiros além do estritamente necessário.
         </p>
       </LegalSection>
 
       <LegalSection title="3. Documentação">
         <LegalList
           items={[
-            `O documento principal da análise é o ComprovaBet anual referente a ${year}.`,
-            "O ComprovaBet deve estar em nome do próprio solicitante e corresponder ao CPF informado no cadastro. Quando possível, o CPF do documento é conferido automaticamente; nos demais casos, a conferência é feita pela equipe.",
-            "Logo depois do envio, o ComprovaBet passa por uma pré-análise automática: a leitura do PDF confere o CPF, o ano de referência e o tipo do documento, e compara as plataformas e os valores com as informações do formulário. Quando essas conferências são confirmadas, o documento é aprovado na pré-análise; quando a leitura automática não é possível (por exemplo, foto ou PDF digitalizado), a conferência é feita pela equipe. Documento de outro ano ou de outro CPF precisa ser substituído antes do pagamento.",
-            "A pré-análise automática confere o documento, não o resultado do caso. Se o ComprovaBet estiver completo e consistente, não serão pedidos outros documentos naquele momento. Havendo informação faltante ou inconsistência, a equipe poderá solicitar documentos complementares.",
+            "Para começar, não é preciso enviar documentos: você informa se já pediu o estorno, as casas de apostas, o período e a faixa de perda.",
+            "Depois do pagamento, a equipe entra em contato para verificar quais documentos são necessários para prosseguir, como o extrato bancário com os PIX para as casas de apostas ou o ComprovaBet. Os documentos são enviados pelo acompanhamento, com o protocolo e o e-mail da solicitação.",
+            "Os documentos devem estar em nome do próprio solicitante e corresponder ao CPF informado. Quando possível, o CPF do documento é conferido automaticamente; nos demais casos, a conferência é feita pela equipe.",
+            MANUAL_SUPPORT_TEXT,
             "O CPF não pode ser alterado depois que a análise documental estiver em andamento.",
           ]}
         />
       </LegalSection>
 
-      <LegalSection title="4. Pagamento da análise">
+      <LegalSection title="4. Pagamento da taxa">
         <p>{PAYMENT_NOTICE}</p>
         <LegalList
           items={[
-            "O pagamento é feito ao final do formulário, depois da revisão das informações e antes do envio da solicitação. A solicitação só é registrada com a confirmação do pagamento.",
+            "O pagamento é feito ao final do formulário, depois do resultado e antes do registro da solicitação. A solicitação só é registrada com a confirmação do pagamento.",
             "O pagamento é feito por PIX: o QR Code e o código copia e cola aparecem na própria tela de pagamento, e o pagamento é feito no aplicativo do seu banco. A cobrança é processada pela BlackCat, e a confirmação do pagamento é automática. O site não recebe dados bancários.",
-            "Antes do pagamento, você declara que as informações e os documentos enviados são verdadeiros e pertencem ao solicitante cadastrado. O aceite é registrado com data, hora e a versão destas condições.",
-            "O valor corresponde ao serviço de análise documental e não depende do resultado da análise.",
+            "Antes do pagamento, você declara que as informações são verdadeiras, que o CPF informado é seu e que nunca solicitou o estorno dessas perdas antes. O aceite é registrado com data, hora e a versão destas condições.",
+            "O valor corresponde ao serviço de análise e acompanhamento e não depende do resultado da análise.",
             "Por se tratar de contratação pela internet, você pode desistir em até 7 (sete) dias da contratação, nos termos do art. 49 do Código de Defesa do Consumidor, pelos canais de atendimento informados no site.",
           ]}
         />
       </LegalSection>
 
-      <LegalSection title="5. Prazo">
-        <p>
-          Em até {config.reviewDays} dias úteis a partir do envio da solicitação (feito com o pagamento confirmado), a equipe entra em contato pelo
-          WhatsApp ou e-mail informados para apresentar o resultado da análise e, se o caso puder prosseguir, combinar as condições e as formas de
-          pagamento das próximas etapas. Não contam como dias úteis sábados, domingos, feriados nacionais, Carnaval e Corpus Christi. Se forem
-          necessários documentos complementares, a análise continua após o recebimento deles e o prazo pode ser ajustado.
-        </p>
+      <LegalSection title="5. Prazos">
+        <LegalList
+          items={[
+            "Primeiro contato: em até 1 dia útil depois da confirmação do pagamento, pelo canal (WhatsApp, ligação ou e-mail) e no horário que você preferir, para verificar os documentos necessários.",
+            `Resultado da análise: em até ${config.reviewDays} dias úteis a partir do registro da solicitação, a equipe entra em contato pelo WhatsApp ou e-mail informados para apresentar o resultado e, se o caso puder prosseguir, combinar as condições e as formas de pagamento das próximas etapas. A análise depende do recebimento dos documentos pedidos, e o prazo pode ser ajustado quando eles chegam depois.`,
+            "Não contam como dias úteis sábados, domingos, feriados nacionais, Carnaval e Corpus Christi.",
+          ]}
+        />
       </LegalSection>
 
-      <LegalSection title="6. Compromisso voluntário">
+      <LegalSection title="6. Autoexclusão">
         <p>
-          O compromisso de não realizar novas apostas durante a análise é uma decisão pessoal e voluntária. Ele não representa bloqueio técnico das
-          suas contas e o seu cumprimento não garante aprovação ou recuperação de valores. Para um bloqueio efetivo, existe a autoexclusão oficial do
-          Governo Federal, disponível em gov.br/autoexclusaoapostas, que não tem relação com este serviço.
+          Este serviço não bloqueia contas nem impede novas apostas. Para um bloqueio efetivo, existe a autoexclusão oficial do Governo Federal,
+          disponível em gov.br/autoexclusaoapostas, que não tem relação com este serviço. Solicitações anteriores podem ter incluído um compromisso
+          voluntário de não apostar durante a análise: esse compromisso é pessoal, não representa bloqueio técnico das contas e o seu cumprimento
+          não garante aprovação ou recuperação de valores.
         </p>
       </LegalSection>
 

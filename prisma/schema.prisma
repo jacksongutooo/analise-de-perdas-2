@@ -30,6 +30,42 @@ enum UsagePeriod {
   @@map("usage_period")
 }
 
+/// Faixa de perda informada no formulário sem documento. Casos anteriores têm os valores declarados.
+enum LossRange {
+  up_to_1k
+  from_1k_to_5k
+  from_5k_to_20k
+  from_20k_to_50k
+  over_50k
+
+  @@map("loss_range")
+}
+
+/// Como o cliente prefere comprovar as perdas (informado depois do pagamento).
+enum EvidencePreference {
+  bank_statement
+  comprovabet
+  team_guidance
+
+  @@map("evidence_preference")
+}
+
+enum ContactChannel {
+  whatsapp
+  phone
+  email
+
+  @@map("contact_channel")
+}
+
+enum ContactPeriod {
+  morning
+  afternoon
+  evening
+
+  @@map("contact_period")
+}
+
 /// Etapa 5: se as apostas saíram do controle (resposta do cliente). Casos anteriores ficam sem resposta.
 enum ControlLoss {
   yes
@@ -174,48 +210,63 @@ model BettingPlatform {
 }
 
 model Case {
-  id                    String        @id @default(cuid())
-  protocol              String        @unique
-  userId                String        @map("user_id")
-  betType               BetType       @map("bet_type")
-  sportsBetKind         String?       @map("sports_bet_kind")
-  casinoGames           String[]      @default([]) @map("casino_games")
-  mainLossArea          String?       @map("main_loss_area")
+  id                    String              @id @default(cuid())
+  protocol              String              @unique
+  userId                String              @map("user_id")
+  /// Nulo nos casos do formulário sem documento (a pergunta saiu do formulário).
+  betType               BetType?            @map("bet_type")
+  sportsBetKind         String?             @map("sports_bet_kind")
+  casinoGames           String[]            @default([]) @map("casino_games")
+  mainLossArea          String?             @map("main_loss_area")
   period                UsagePeriod
-  controlLoss           ControlLoss?  @map("control_loss")
-  situations            String[]      @default([])
-  situationOther        String?       @map("situation_other")
-  declaredDeposits      Decimal       @map("declared_deposits") @db.Decimal(14, 2)
-  declaredWithdrawals   Decimal       @map("declared_withdrawals") @db.Decimal(14, 2)
-  declaredBalance       Decimal       @default(0) @map("declared_balance") @db.Decimal(14, 2)
-  declaredLoss          Decimal       @map("declared_loss") @db.Decimal(14, 2)
-  declaredNeedsReview   Boolean       @default(false) @map("declared_needs_review")
-  identifiedDeposits    Decimal?      @map("identified_deposits") @db.Decimal(14, 2)
-  identifiedWithdrawals Decimal?      @map("identified_withdrawals") @db.Decimal(14, 2)
-  identifiedBalance     Decimal?      @map("identified_balance") @db.Decimal(14, 2)
-  identifiedLoss        Decimal?      @map("identified_loss") @db.Decimal(14, 2)
-  identifiedSource      ValueSource?  @map("identified_source")
-  validatedLoss         Decimal?      @map("validated_loss") @db.Decimal(14, 2)
-  status                CaseStatus    @default(submitted)
+  controlLoss           ControlLoss?        @map("control_loss")
+  situations            String[]            @default([])
+  situationOther        String?             @map("situation_other")
+  /// Valores exatos informados nos casos anteriores. No formulário sem documento, o cliente informa só a faixa.
+  declaredDeposits      Decimal?            @map("declared_deposits") @db.Decimal(14, 2)
+  declaredWithdrawals   Decimal?            @map("declared_withdrawals") @db.Decimal(14, 2)
+  declaredBalance       Decimal             @default(0) @map("declared_balance") @db.Decimal(14, 2)
+  declaredLoss          Decimal?            @map("declared_loss") @db.Decimal(14, 2)
+  declaredNeedsReview   Boolean             @default(false) @map("declared_needs_review")
+  lossRange             LossRange?          @map("loss_range")
+  /// O cliente declarou que nunca pediu o estorno dessas perdas (a solicitação é feita uma única vez por CPF).
+  firstRequestDeclared  Boolean?            @map("first_request_declared")
+  /// Preferências informadas depois do pagamento: como comprovar, por onde e quando falar com a equipe.
+  evidencePreference    EvidencePreference? @map("evidence_preference")
+  contactChannel        ContactChannel?     @map("contact_channel")
+  contactPeriod         ContactPeriod?      @map("contact_period")
+  preferencesAt         DateTime?           @map("preferences_at")
+  /// Prazo do primeiro contato da equipe (1 dia útil depois do pagamento). Nulo nos casos anteriores.
+  contactDeadline       DateTime?           @map("contact_deadline")
+  contactedAt           DateTime?           @map("contacted_at")
+  contactedById         String?             @map("contacted_by_id")
+  identifiedDeposits    Decimal?            @map("identified_deposits") @db.Decimal(14, 2)
+  identifiedWithdrawals Decimal?            @map("identified_withdrawals") @db.Decimal(14, 2)
+  identifiedBalance     Decimal?            @map("identified_balance") @db.Decimal(14, 2)
+  identifiedLoss        Decimal?            @map("identified_loss") @db.Decimal(14, 2)
+  identifiedSource      ValueSource?        @map("identified_source")
+  validatedLoss         Decimal?            @map("validated_loss") @db.Decimal(14, 2)
+  status                CaseStatus          @default(submitted)
   /// Casos anteriores ao pagamento da análise ficam como "not_applicable".
-  paymentStatus         PaymentStatus @default(pending) @map("payment_status")
-  paymentConfirmedAt    DateTime?     @map("payment_confirmed_at")
-  paymentConfirmedById  String?       @map("payment_confirmed_by_id")
-  paymentReference      String?       @map("payment_reference")
+  paymentStatus         PaymentStatus       @default(pending) @map("payment_status")
+  paymentConfirmedAt    DateTime?           @map("payment_confirmed_at")
+  paymentConfirmedById  String?             @map("payment_confirmed_by_id")
+  paymentReference      String?             @map("payment_reference")
   /// Pré-análise automática do ComprovaBet no envio (aprovado, conferência pela equipe ou pendência).
-  preAnalysis           Json?         @map("pre_analysis")
-  assignedAdminId       String?       @map("assigned_admin_id")
-  nextSteps             String?       @map("next_steps")
-  privacyConsentAt      DateTime      @map("privacy_consent_at")
-  privacyConsentIp      String?       @map("privacy_consent_ip")
-  isDemo                Boolean       @default(false) @map("is_demo")
-  createdAt             DateTime      @default(now()) @map("created_at")
-  updatedAt             DateTime      @updatedAt @map("updated_at")
-  reviewDeadline        DateTime      @map("review_deadline")
+  preAnalysis           Json?               @map("pre_analysis")
+  assignedAdminId       String?             @map("assigned_admin_id")
+  nextSteps             String?             @map("next_steps")
+  privacyConsentAt      DateTime            @map("privacy_consent_at")
+  privacyConsentIp      String?             @map("privacy_consent_ip")
+  isDemo                Boolean             @default(false) @map("is_demo")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  reviewDeadline        DateTime            @map("review_deadline")
 
   user               User                   @relation(fields: [userId], references: [id])
   assignedAdmin      AdminUser?             @relation("CaseAssignee", fields: [assignedAdminId], references: [id])
   paymentConfirmedBy AdminUser?             @relation("CasePaymentConfirmer", fields: [paymentConfirmedById], references: [id])
+  contactedBy        AdminUser?             @relation("CaseContactedBy", fields: [contactedById], references: [id])
   platforms          CasePlatform[]
   declarations       FinancialDeclaration[]
   documents          Document[]
@@ -232,6 +283,7 @@ model Case {
   @@index([status])
   @@index([createdAt])
   @@index([isDemo])
+  @@index([contactDeadline])
   @@map("cases")
 }
 
@@ -569,6 +621,7 @@ model AdminUser {
   sessions          AdminSession[]
   assignedCases     Case[]            @relation("CaseAssignee")
   confirmedPayments Case[]            @relation("CasePaymentConfirmer")
+  contactedCases    Case[]            @relation("CaseContactedBy")
   reviews           CaseReview[]
   notes             CaseNote[]
   statusChanges     StatusHistory[]

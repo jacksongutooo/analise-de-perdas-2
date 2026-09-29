@@ -14,13 +14,13 @@ export const maxDuration = 60;
 const EXPIRED = "Sua sessão de envio expirou. Preencha seus dados novamente.";
 
 /**
- * Gera a cobrança PIX da análise (BlackCat). Recebe só o aceite e as respostas do formulário: o valor é sempre
+ * Gera a cobrança PIX da taxa (BlackCat). Recebe só o aceite e as respostas do formulário: o valor é sempre
  * definido pelo servidor (qualquer valor enviado pelo navegador é ignorado) e a chave da API nunca sai daqui.
  */
 export async function POST(req: Request) {
   if (!isSameOrigin(req)) return NextResponse.json({ error: "Origem não permitida." }, { status: 403 });
   const draft = await authenticateDraft(req);
-  if (!draft || draft.expired || draft.submittedAt) return NextResponse.json({ error: EXPIRED, field: "documents" }, { status: 401 });
+  if (!draft || draft.expired || draft.submittedAt) return NextResponse.json({ error: EXPIRED, field: "draft" }, { status: 401 });
   const ip = clientIp(req.headers);
   const ua = userAgent(req.headers);
   // Conta os pedidos registrados abaixo ("payment.checkout"); o limite é folgado porque redes móveis compartilham IP.

@@ -2,9 +2,10 @@ import Link from "next/link";
 import { IconSearch } from "@/components/icons";
 import { Badge, LinkButton, Notice, Select, TextInput, buttonClasses } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth/admin";
-import { getFilterOptions, listCases, parseCaseFilters, type CaseFilters } from "@/lib/cases/admin-queries";
-import { formatBRL, formatDate } from "@/lib/format";
-import { BET_TYPES, BET_TYPE_SHORT } from "@/lib/options";
+import { CONTACT_FILTERS, getFilterOptions, listCases, parseCaseFilters, type CaseFilters } from "@/lib/cases/admin-queries";
+import { contactState } from "@/lib/contact";
+import { formatBRL, formatDate, formatDateTime } from "@/lib/format";
+import { BET_TYPES, BET_TYPE_SHORT, LOSS_RANGES, labelFor, type LossRangeValue } from "@/lib/options";
 import {
   CASE_STATUS_LABEL,
   CASE_STATUS_TONE,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/status";
 
 const GROUP_OPTIONS = [
-  { value: "group:new", label: "Validação documental" },
+  { value: "group:new", label: "Novos e em validação" },
   { value: "group:waiting", label: "Aguardando o cliente" },
   { value: "group:ready", label: "Prontos para análise" },
   { value: "group:review", label: "Em análise" },
@@ -39,9 +40,30 @@ function DocumentationBadge({ status, cpfCheck }: { status: DocumentStatusValue 
   );
 }
 
+/** Primeiro contato (formulário sem documento): prazo e situação. */
+function ContactBadge({ deadline, contactedAt }: { deadline: Date | null; contactedAt: Date | null }) {
+  const state = contactState(deadline, contactedAt);
+  if (!state || state === "done") return null;
+  return (
+    <span className="mt-1 flex flex-col items-start gap-0.5">
+      <Badge tone={state === "overdue" ? "danger" : "warn"}>{state === "overdue" ? "Contato atrasado" : "Contatar"}</Badge>
+      {deadline && <span className="text-[0.7rem] text-muted">até {formatDateTime(deadline)}</span>}
+    </span>
+  );
+}
+
+/** Valor informado: exato (casos anteriores) ou a faixa (formulário sem documento). */
+function declaredLabel(cents: number | null, range: LossRangeValue | null): string {
+  if (cents !== null) return formatBRL(cents);
+  return range ? labelFor(LOSS_RANGES, range) : "—";
+}
+
+/** Filtros na URL: "contact" aparece como "contato", como no painel. */
+const QUERY_KEYS: Partial<Record<keyof CaseFilters, string>> = { contact: "contato" };
+
 function pageHref(f: CaseFilters, page: number) {
   const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(f)) if (key !== "page" && value) params.set(key, String(value));
+  for (const [key, value] of Object.entries(f)) if (key !== "page" && value) params.set(QUERY_KEYS[key as keyof CaseFilters] ?? key, String(value));
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
   return `/admin/casos${qs ? `?${qs}` : ""}`;
@@ -67,6 +89,7 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
   const advancedActive = [filters.type, filters.platform, filters.admin, filters.from, filters.to, filters.min, filters.max, filters.payment].filter(
     Boolean,
   ).length;
+  const contactFilter = CONTACT_FILTERS.find((c) => c.value === filters.contact);
 
   return (
     <div className="space-y-5">
@@ -74,7 +97,10 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink">Casos</h1>
-          <p className="text-sm text-muted">{total === 1 ? "1 caso encontrado" : `${total} casos encontrados`}</p>
+          <p className="text-sm text-muted">
+            {total === 1 ? "1 caso encontrado" : `${total} casos encontrados`}
+            {contactFilter ? ` · ${contactFilter.label.toLowerCase()}` : ""}
+          </p>
         </div>
       </div>
 
@@ -84,6 +110,14 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
             <IconSearch size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
             <TextInput name="q" defaultValue={filters.q} placeholder="Protocolo, nome, e-mail ou CPF" className="pl-10" aria-label="Buscar" />
           </div>
+          <Select name="contato" defaultValue={filters.contact} aria-label="Primeiro contato" className="sm:w-56">
+            <option value="">Todos os contatos</option>
+            {CONTACT_FILTERS.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
           <Select name="status" defaultValue={filters.status} aria-label="Status" className="sm:w-64">
             <option value="">Todos os status</option>
             <optgroup label="Grupos">
@@ -222,7 +256,7 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
                     </td>
                     <td className="hidden max-w-40 truncate px-4 py-3 text-ink-soft 2xl:table-cell">{r.platforms.join(", ")}</td>
                     <td className="hidden whitespace-nowrap px-4 py-3 text-right tabular-nums 2xl:table-cell">
-                      {formatBRL(r.declaredLossCents)}
+                      {declaredLabel(r.declaredLossCents, r.lossRange)}
                       <span className="block text-[0.7rem] text-muted">
                         <IdentifiedValue cents={r.identifiedLossCents} source={r.identifiedSource} />
                       </span>
@@ -235,6 +269,7 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
                     </td>
                     <td className="px-4 py-3">
                       <Badge tone={CASE_STATUS_TONE[r.status]}>{CASE_STATUS_LABEL[r.status]}</Badge>
+                      <ContactBadge deadline={r.contactDeadline} contactedAt={r.contactedAt} />
                     </td>
                     <td className="hidden max-w-32 truncate px-4 py-3 text-ink-soft xl:table-cell">{r.assignee ?? "—"}</td>
                     <td className="px-4 py-3 text-right">
@@ -259,7 +294,10 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
                     <p className="truncate text-sm text-ink-soft">{r.name}</p>
                     <p className="text-xs tabular-nums text-muted">{r.cpfMasked ? `CPF ${r.cpfMasked}` : "CPF não informado"}</p>
                   </div>
-                  <Badge tone={CASE_STATUS_TONE[r.status]}>{CASE_STATUS_LABEL[r.status]}</Badge>
+                  <span className="flex flex-col items-end">
+                    <Badge tone={CASE_STATUS_TONE[r.status]}>{CASE_STATUS_LABEL[r.status]}</Badge>
+                    <ContactBadge deadline={r.contactDeadline} contactedAt={r.contactedAt} />
+                  </span>
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                   <div>
@@ -275,13 +313,14 @@ export default async function CasosPage({ searchParams }: { searchParams: Promis
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-muted">Declarado</dt>
-                    <dd className="tabular-nums">{formatBRL(r.declaredLossCents)}</dd>
+                    <dt className="text-xs text-muted">{r.declaredLossCents !== null ? "Declarado" : "Faixa informada"}</dt>
+                    <dd className="tabular-nums">{declaredLabel(r.declaredLossCents, r.lossRange)}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-muted">Tipo · Data</dt>
+                    <dt className="text-xs text-muted">{r.betType ? "Tipo · Data" : "Data"}</dt>
                     <dd>
-                      {BET_TYPE_SHORT[r.betType]} · {formatDate(r.createdAt)}
+                      {r.betType ? `${BET_TYPE_SHORT[r.betType]} · ` : ""}
+                      {formatDate(r.createdAt)}
                     </dd>
                   </div>
                 </dl>

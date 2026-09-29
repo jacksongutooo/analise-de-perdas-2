@@ -13,8 +13,8 @@ export default function PrivacidadePage() {
     <LegalPage title="Política de Privacidade" updatedAt="setembro de 2026">
       <p>
         Esta política explica como {controller}
-        {site.cnpj ? `, inscrita no CNPJ ${site.cnpj},` : ""} trata os dados pessoais de quem solicita a análise documental de perdas em apostas
-        online, em conformidade com a Lei Geral de Proteção de Dados Pessoais (Lei nº 13.709/2018 — LGPD).
+        {site.cnpj ? `, inscrita no CNPJ ${site.cnpj},` : ""} trata os dados pessoais de quem solicita a análise e o acompanhamento do pedido de estorno de
+        perdas em apostas online, em conformidade com a Lei Geral de Proteção de Dados Pessoais (Lei nº 13.709/2018 — LGPD).
       </p>
 
       <LegalSection title="1. Dados que tratamos">
@@ -22,11 +22,12 @@ export default function PrivacidadePage() {
           items={[
             "Identificação e contato: nome completo, CPF, e-mail e WhatsApp.",
             "Confirmação de maioridade (18 anos ou mais).",
-            "Respostas do formulário: tipo de aposta, plataformas utilizadas, período, valores aproximados informados e situação do caso, inclusive se as apostas saíram do seu controle. Essa informação pode dizer respeito à sua saúde: é usada apenas para a análise do caso, com o seu consentimento, e fica restrita à equipe.",
-            "Documentos enviados por você, principalmente o ComprovaBet anual e, quando solicitados, documentos complementares (como históricos de depósitos, saques e apostas), que podem conter dados de movimentações financeiras.",
-            "Registro do compromisso voluntário: aceite, data e hora, endereço IP e identificação do navegador.",
-            "Registro do aceite das condições do serviço antes do pagamento da análise: data e hora, versão do texto, endereço IP e identificação do navegador.",
-            "Dados do pagamento da análise (PIX): situação, valor, datas, identificador da transação e referência interna do pedido. O pagamento é feito no aplicativo do seu banco: o site não recebe dados bancários.",
+            "Respostas do formulário: se você já pediu o estorno, as casas de apostas utilizadas, o período e a faixa de perda informada. Em solicitações anteriores, o formulário também perguntava o tipo de aposta, os valores aproximados e se as apostas saíram do controle; essa informação pode dizer respeito à saúde, é usada apenas para a análise do caso, com o seu consentimento, e fica restrita à equipe.",
+            "Preferências de contato informadas depois do pagamento: como prefere comprovar as perdas, o canal (WhatsApp, ligação ou e-mail) e o melhor horário.",
+            "Documentos enviados por você quando a equipe pedir, como o extrato bancário ou o ComprovaBet anual, que podem conter dados de movimentações financeiras.",
+            "Registro do compromisso voluntário, em solicitações anteriores que o incluíam: aceite, data e hora, endereço IP e identificação do navegador.",
+            "Registro do aceite das condições do serviço antes do pagamento: data e hora, versão do texto, endereço IP e identificação do navegador.",
+            "Dados do pagamento da taxa (PIX): situação, valor, datas, identificador da transação e referência interna do pedido. O pagamento é feito no aplicativo do seu banco: o site não recebe dados bancários.",
             "Dados técnicos de acesso: endereço IP, data e hora e identificação do navegador, inclusive nos acessos ao acompanhamento.",
           ]}
         />
@@ -36,10 +37,11 @@ export default function PrivacidadePage() {
       <LegalSection title="2. Para que usamos os dados">
         <LegalList
           items={[
+            "Mostrar o resultado ao fim do formulário, com base nas suas respostas.",
+            "Entrar em contato com você depois do pagamento, pelo canal e no horário preferidos, para combinar os documentos necessários.",
             "Analisar a documentação enviada e classificar o seu caso.",
-            "Conferir se o ComprovaBet pertence a você, comparando o CPF do documento com o CPF informado.",
-            "Fazer a pré-análise automática do ComprovaBet: leitura do texto do PDF para conferir o CPF, o ano de referência e o tipo do documento, e comparar as plataformas e os valores com as suas respostas.",
-            "Registrar o aceite das condições e confirmar o pagamento da análise com o provedor de pagamento.",
+            "Conferir se os documentos pertencem a você, comparando o CPF do documento com o CPF informado.",
+            "Registrar o aceite das condições e confirmar o pagamento da taxa com o provedor de pagamento.",
             "Conferir os valores informados com os documentos.",
             "Informar o andamento e o resultado da análise pelo painel de acompanhamento, e-mail ou WhatsApp.",
             "Solicitar documentos adicionais, quando necessários.",
@@ -50,7 +52,7 @@ export default function PrivacidadePage() {
 
       <LegalSection title="3. Bases legais">
         <p>
-          Tratamos os dados com base no seu consentimento (art. 7º, I, da LGPD), registrado antes do envio dos documentos; na execução de
+          Tratamos os dados com base no seu consentimento (art. 7º, I, da LGPD), registrado no formulário, antes do resultado; na execução de
           procedimentos preliminares relacionados ao serviço solicitado por você (art. 7º, V); no cumprimento de obrigação legal ou regulatória (art.
           7º, II), como a guarda de registros de acesso prevista no Marco Civil da Internet; e no legítimo interesse para segurança e prevenção de
           fraudes (art. 7º, IX).
@@ -64,7 +66,7 @@ export default function PrivacidadePage() {
           quando exigido por lei ou por ordem de autoridade competente.
         </p>
         <p>
-          O pagamento da análise (PIX) é processado pela BlackCat, que recebe o seu nome, o seu CPF, o seu e-mail, o seu WhatsApp e o valor
+          O pagamento da taxa (PIX) é processado pela BlackCat, que recebe o seu nome, o seu CPF, o seu e-mail, o seu WhatsApp e o valor
           para gerar a cobrança e identificar o pagamento, e trata esses dados conforme a política de privacidade própria. Os documentos e as
           respostas do formulário não são enviados ao processador de pagamento.
         </p>
@@ -86,7 +88,7 @@ export default function PrivacidadePage() {
       <LegalSection title="6. Por quanto tempo guardamos">
         <LegalList
           items={[
-            `Arquivos enviados em solicitações não concluídas são apagados automaticamente em até ${config.draftTtlDays} dias (ou em até 30 dias, quando o pagamento chegou a ser iniciado).`,
+            `Respostas e CPF de solicitações não concluídas são apagados automaticamente em até ${config.draftTtlDays} dias (ou em até 30 dias, quando o pagamento chegou a ser iniciado).`,
             "Os dados das solicitações enviadas são mantidos durante a análise e pelo período necessário para as finalidades descritas, para o exercício regular de direitos e para o cumprimento de obrigações legais.",
             "Registros de acesso são mantidos por no mínimo 6 meses, conforme o Marco Civil da Internet (Lei nº 12.965/2014).",
           ]}
@@ -104,7 +106,7 @@ export default function PrivacidadePage() {
             "eliminação dos dados tratados com base no consentimento, ressalvadas as hipóteses legais de conservação;",
             "informação sobre com quem compartilhamos os dados;",
             "revogação do consentimento;",
-            "revisão, por uma pessoa da equipe, de decisões tomadas apenas com base em tratamento automatizado, como a pré-análise do documento (art. 20 da LGPD).",
+            "revisão, por uma pessoa da equipe, de decisões tomadas apenas com base em tratamento automatizado, como a leitura automática dos documentos (art. 20 da LGPD).",
           ]}
         />
         <p>
@@ -122,8 +124,8 @@ export default function PrivacidadePage() {
 
       <LegalSection title="8. Cookies">
         <p>
-          Usamos apenas cookies essenciais para manter sua sessão de acompanhamento e a sessão da equipe. As respostas do formulário ficam salvas no
-          seu próprio navegador até o envio, para que você possa continuar de onde parou. Não usamos cookies de publicidade.
+          Usamos apenas cookies essenciais para manter sua sessão de acompanhamento e a sessão da equipe. As respostas do formulário (sem o CPF completo) ficam
+          salvas no seu próprio navegador até o envio, para que você possa continuar de onde parou. Não usamos cookies de publicidade.
         </p>
       </LegalSection>
 

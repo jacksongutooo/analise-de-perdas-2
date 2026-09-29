@@ -1,4 +1,4 @@
-// Textos e regras do fluxo com o ComprovaBet anual como documento principal.
+// Textos do ComprovaBet (enviado no acompanhamento, quando a equipe pede) e das condições do serviço.
 // Compartilhado entre navegador e servidor (sem dependências). Linguagem: análise, documentação e
 // acompanhamento. Nada aqui promete recuperação, restituição, indenização ou resultado.
 
@@ -8,18 +8,6 @@ export const COMPROVABET_NAME = "ComprovaBet";
 export const COMPROVABET_EXTENSIONS = ["pdf", "jpg", "jpeg", "png"];
 export const COMPROVABET_ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
 export const COMPROVABET_MAX_FILES = 5;
-
-export function comprovabetTitle(year: number): string {
-  return `Envie seu ComprovaBet ${year}`;
-}
-
-export function comprovabetIntro(year: number): string[] {
-  return [
-    `Para iniciar a análise, envie o ComprovaBet anual referente ao período de ${year}.`,
-    "O documento deverá pertencer ao mesmo CPF informado no cadastro. Nossa análise será realizada com base nas informações apresentadas no documento.",
-    "Se o ComprovaBet estiver completo e consistente, não será necessário enviar outros documentos neste momento. Caso seja identificada alguma informação faltante ou inconsistência, nossa equipe poderá solicitar documentos complementares.",
-  ];
-}
 
 export const COMPROVABET_OWNER_NOTICE = "O ComprovaBet deve estar em nome do próprio solicitante e corresponder ao CPF cadastrado.";
 
@@ -45,18 +33,13 @@ export const ANALYSIS_IN_PROGRESS_TEXT =
 
 // ─── Pagamento da análise ─────────────────────────────────────────────────
 export const PAYMENT_NOTICE =
-  "O pagamento refere-se ao serviço de análise do seu caso, feito pela nossa equipe com base no ComprovaBet e nas informações enviadas.";
+  "A taxa refere-se ao serviço de análise e acompanhamento da sua solicitação pela nossa equipe e não depende do resultado.";
 
 export const SERVICE_TERMS_CHECKBOX =
-  "Li e estou de acordo com as condições do serviço de análise e confirmo que as informações e documentos enviados são verdadeiros e pertencem ao solicitante cadastrado.";
+  "Li e estou de acordo com as condições do serviço. Confirmo que as informações são verdadeiras, que o CPF informado é meu e que nunca solicitei o estorno dessas perdas antes.";
 
 /** Versão das condições aceitas antes do pagamento. Mude ao alterar o texto acima ou os Termos de Uso. */
-export const SERVICE_TERMS_VERSION = "2026-09-v5";
-
-/** Requisitos em letras pequenas na página inicial. */
-export function requirementsText(year: number): string {
-  return `Para solicitar o estorno, é preciso ter o ComprovaBet ${year} em mãos e nunca ter pedido o estorno dessas perdas antes. É possível apenas uma solicitação de estorno por CPF.`;
-}
+export const SERVICE_TERMS_VERSION = "2026-09-v6";
 
 /** Prazo de retorno da equipe depois do pagamento (em dias úteis). */
 export function contactWithinText(reviewDays: number): string {

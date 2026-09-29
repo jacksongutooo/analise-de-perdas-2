@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 const EXPIRED = "Sua sessão de envio expirou. Preencha seus dados novamente.";
 
-/** Cria o rascunho que recebe os arquivos antes do envio final. */
+/** Cria o rascunho que guarda o CPF e as respostas até o pagamento. */
 export async function POST(req: Request) {
   const ip = clientIp(req.headers);
   if (await isRateLimited({ action: "draft.create", ip, limit: 20, windowMinutes: 60 })) {
@@ -30,9 +30,18 @@ export async function POST(req: Request) {
   return NextResponse.json({ id: draft.id, token }, { status: 201 });
 }
 
+/** Situação do rascunho ao retomar o formulário: só o CPF mascarado (***.***.***-00). */
+export async function GET(req: Request) {
+  const draft = await authenticateDraft(req);
+  if (!draft || draft.expired) return NextResponse.json({ error: EXPIRED }, { status: 401 });
+  return NextResponse.json(
+    { cpfMasked: draft.cpf ? maskCpf(draft.cpf) : null, submitted: Boolean(draft.submittedAt) },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 /**
- * Registra o CPF do solicitante no rascunho. É com ele que o ComprovaBet é conferido no envio.
- * Depois que um ComprovaBet é enviado, o CPF só muda se o arquivo for removido antes.
+ * Registra o CPF do solicitante no rascunho (usado na cobrança do PIX e no registro da solicitação).
  * A resposta traz apenas a versão mascarada (***.***.***-00).
  */
 export async function PUT(req: Request) {
@@ -47,20 +56,11 @@ export async function PUT(req: Request) {
   const cpf = normalizeCpf(String(body.cpf ?? "").slice(0, 20));
   if (!cpf) return NextResponse.json({ error: "Informe um CPF válido.", field: "cpf" }, { status: 422 });
 
-  if (draft.cpf && draft.cpf !== cpf) {
-    const sent = await prisma.document.count({ where: { draftId: draft.id, category: "comprovabet" } });
-    if (sent > 0) {
-      return NextResponse.json(
-        { error: "Para alterar o CPF, remova antes o ComprovaBet enviado na etapa de documentos.", field: "cpf" },
-        { status: 409 },
-      );
-    }
-  }
   await prisma.caseDraft.update({ where: { id: draft.id }, data: { cpf } });
   return NextResponse.json({ cpfMasked: maskCpf(cpf) });
 }
 
-/** "Recomeçar": apaga o rascunho, o CPF informado e os arquivos enviados até agora (não depois de pagar). */
+/** "Recomeçar": apaga o rascunho e o CPF informado (não depois de pagar ou com um PIX em aberto). */
 export async function DELETE(req: Request) {
   const draft = await authenticateDraft(req);
   if (draft && !draft.submittedAt && !(await deleteDraftCompletely(draft.id))) {

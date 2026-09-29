@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import { AnalysisWizard } from "@/components/analysis/AnalysisWizard";
-import { config } from "@/lib/env";
 import { analysisPrice, paymentProvider } from "@/lib/payments";
 
-export const metadata: Metadata = { title: "Iniciar análise" };
+export const metadata: Metadata = { title: "Ver se meu CPF pode pedir o estorno" };
 // Valor e disponibilidade do PIX lidos do servidor a cada acesso: a tela mostra sempre o valor que será cobrado.
 export const dynamic = "force-dynamic";
 
@@ -13,9 +12,6 @@ export default function AnalisePage() {
   return (
     <AnalysisWizard
       settings={{
-        maxUploadMb: config.maxUploadMb,
-        reviewDays: config.reviewDays,
-        comprovabetYear: config.comprovabetYear,
         payment: {
           available: Boolean(provider && price),
           priceCents: price?.cents ?? null,

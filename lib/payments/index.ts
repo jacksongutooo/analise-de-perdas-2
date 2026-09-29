@@ -1,19 +1,17 @@
-// Pagamento da análise ANTES do envio da solicitação, por PIX (BlackCat).
+// Pagamento da taxa ANTES do registro da solicitação, por PIX (BlackCat).
 // Fluxo: tela de pagamento (aceite obrigatório) → "Gerar PIX" (cobrança criada no servidor, com o valor definido
 // aqui) → QR Code e copia e cola na própria tela → confirmação pela notificação transaction.paid, sempre conferida
-// na consulta de status da BlackCat → a solicitação é concluída, mesmo que o cliente feche a página.
+// na consulta de status da BlackCat → a solicitação é registrada, mesmo que o cliente feche a página.
 import { Prisma, type Payment } from "@prisma/client";
 import { after } from "next/server";
 import { logAccess } from "@/lib/audit";
 import { SubmissionError, assertDraftReady, submitCase } from "@/lib/cases/submit";
-import { submissionSchema, type SubmissionData } from "@/lib/cases/submission";
+import { parseStoredAnswers, type SubmissionData } from "@/lib/cases/submission";
 import { SERVICE_TERMS_VERSION } from "@/lib/comprovabet";
 import { normalizeCpf, safeErrorMessage } from "@/lib/cpf";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/env";
 import { processCaseDocuments } from "@/lib/extraction/process";
-import { parsePreAnalysis, type PreAnalysisStatus } from "@/lib/documents/pre-analysis";
-import { runPreAnalysis } from "@/lib/documents/pre-analysis-run";
 import { centsToDecimal, decimalToCents, normalizePhoneBR } from "@/lib/format";
 import { randomToken } from "@/lib/security";
 import { site } from "@/lib/site";
@@ -55,7 +53,7 @@ export function blackCatWebhookUrl(): string | null {
   return site.url.startsWith("https://") ? `${site.url.replace(/\/+$/, "")}/api/payments/webhook/blackcat` : null;
 }
 
-const PIX_ITEM_TITLE = "Serviço de análise documental";
+const PIX_ITEM_TITLE = "Serviço de análise e acompanhamento";
 const PIX_EXPIRES_IN_DAYS = 1;
 const PAID_DRAFT_TTL_DAYS = 30;
 /** Um PIX aberto é reaproveitado (cliques repetidos, volta à tela) enquanto faltar ao menos este tempo para expirar. */
@@ -133,10 +131,6 @@ export async function createPixPayment(params: {
   if (!phone) throw new SubmissionError("Informe um WhatsApp válido com DDD.", "whatsapp");
 
   if (await hasPaidPayment(draftId)) return { alreadyPaid: true };
-
-  // A pré-análise automática é refeita aqui (os arquivos podem ter mudado): documento de outro ano ou CPF impede o pagamento.
-  const pre = await runPreAnalysis(draftId, data);
-  if (pre.status === "blocked") throw new SubmissionError(pre.message, "analysis");
 
   const now = new Date();
   const minExpiry = new Date(now.getTime() + PAID_DRAFT_TTL_DAYS * 86_400_000);
@@ -322,7 +316,10 @@ function runLater(task: () => Promise<void>) {
   }
 }
 
-/** Com o pagamento confirmado, conclui a solicitação com as respostas gravadas quando o PIX foi gerado. */
+/**
+ * Com o pagamento confirmado, registra a solicitação com as respostas gravadas quando o PIX foi gerado (as do
+ * formulário anterior também valem: um PIX gerado antes da atualização do site pode ser pago depois).
+ */
 export async function finalizePaidDraft(draftId: string): Promise<{ caseId: string; protocol: string; created: boolean } | null> {
   const draft = await prisma.caseDraft.findUnique({
     where: { id: draftId },
@@ -335,16 +332,17 @@ export async function finalizePaidDraft(draftId: string): Promise<{ caseId: stri
     return c ? { caseId: c.id, protocol: c.protocol, created: false } : null;
   };
   if (draft.submittedAt) return existing();
-  const parsed = submissionSchema.safeParse(draft.answers);
-  if (!parsed.success) {
+  const answers = parseStoredAnswers(draft.answers);
+  if (!answers) {
     console.error("[payments] pagamento confirmado com respostas inválidas no rascunho", draftId);
+    await logAccess({ action: "payment.finalize_failed", targetType: "draft", targetId: draftId, subject: "answers", success: false });
     return null;
   }
   try {
-    const result = await submitCase({ draftId, isDemo: draft.isDemo, data: parsed.data, ip: draft.termsIp, userAgent: draft.termsUserAgent });
+    const result = await submitCase({ draftId, isDemo: draft.isDemo, answers, ip: draft.termsIp, userAgent: draft.termsUserAgent });
     await logAccess({ action: "case.submit", targetType: "case", targetId: result.caseId, subject: "pagamento confirmado" });
-    // Leitura automática dos documentos do caso recém-criado.
-    runLater(() => processCaseDocuments(result.caseId));
+    // Leitura automática dos documentos enviados no formulário anterior (o formulário atual não tem arquivos).
+    if (answers.kind === "legacy") runLater(() => processCaseDocuments(result.caseId));
     return { ...result, created: true };
   } catch (error) {
     // Outro processo (notificação do gateway ou o próprio cliente) já concluiu a solicitação.
@@ -432,8 +430,6 @@ export type DraftPaymentView = {
   paidAt: string | null;
   termsAcceptedAt: string | null;
   protocol: string | null;
-  /** Resultado da última pré-análise automática do ComprovaBet. */
-  preAnalysis: PreAnalysisStatus | null;
   /** PIX aguardando pagamento (só enquanto está em aberto). */
   pix: PixView | null;
   /** PIX simulado (modo demonstração). */
@@ -455,7 +451,7 @@ function pixView(payment: Payment): PixView | null {
 /** Situação do pagamento do rascunho para a tela de pagamento (o navegador pergunta ao nosso servidor, não ao gateway). */
 export async function draftPaymentView(draftId: string, opts: { remote?: boolean; manual?: boolean } = {}): Promise<DraftPaymentView> {
   const payment = await syncDraftPayments(draftId, { remote: opts.remote, manual: opts.manual });
-  const draft = await prisma.caseDraft.findUnique({ where: { id: draftId }, select: { termsAcceptedAt: true, caseId: true, preAnalysis: true } });
+  const draft = await prisma.caseDraft.findUnique({ where: { id: draftId }, select: { termsAcceptedAt: true, caseId: true } });
   const c = draft?.caseId ? await prisma.case.findUnique({ where: { id: draft.caseId }, select: { protocol: true } }) : null;
   return {
     status: payment ? payment.status : "none",
@@ -463,7 +459,6 @@ export async function draftPaymentView(draftId: string, opts: { remote?: boolean
     paidAt: payment?.paidAt?.toISOString() ?? null,
     termsAcceptedAt: draft?.termsAcceptedAt?.toISOString() ?? null,
     protocol: c?.protocol ?? null,
-    preAnalysis: parsePreAnalysis(draft?.preAnalysis)?.status ?? null,
     pix: payment ? pixView(payment) : null,
     demo: payment?.provider === "demo",
   };

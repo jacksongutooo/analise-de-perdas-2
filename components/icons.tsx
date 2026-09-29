@@ -69,21 +69,6 @@ export const IconClock = (p: IconProps) =>
       </>
     ),
   });
-export const IconTrophy = (p: IconProps) =>
-  svg({ ...p, children: <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /> });
-export const IconDice = (p: IconProps) =>
-  svg({
-    ...p,
-    children: (
-      <>
-        <rect x="3.5" y="3.5" width="17" height="17" rx="3.5" />
-        <circle cx="8.5" cy="8.5" r="1.1" fill="currentColor" stroke="none" />
-        <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
-        <circle cx="15.5" cy="15.5" r="1.1" fill="currentColor" stroke="none" />
-      </>
-    ),
-  });
-export const IconLayers = (p: IconProps) => svg({ ...p, children: <path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5" /> });
 export const IconInfo = (p: IconProps) =>
   svg({
     ...p,

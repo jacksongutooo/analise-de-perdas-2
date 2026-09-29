@@ -57,14 +57,22 @@ export function isBusinessDay(utcMidnight: Date): boolean {
 
 /**
  * Fim de um prazo de N dias úteis contado a partir de `start` (o próprio dia não conta, como nos prazos legais).
- * Devolve o meio-dia (horário de Brasília) do último dia útil do prazo.
+ * Devolve o horário `hour` (de Brasília; meio-dia por padrão) do último dia útil do prazo.
  */
-export function addBusinessDays(start: Date, days: number): Date {
+export function addBusinessDays(start: Date, days: number, hour = 12): Date {
   let day = localDay(start);
   let counted = 0;
   while (counted < days) {
     day = new Date(day.getTime() + DAY);
     if (isBusinessDay(day)) counted++;
   }
-  return new Date(day.getTime() + 15 * 3_600_000); // 12h em Brasília (UTC−3)
+  return new Date(day.getTime() + (hour + 3) * 3_600_000); // Brasília é UTC−3
+}
+
+/** Fim do expediente usado no prazo do primeiro contato. */
+export const CONTACT_DEADLINE_HOUR = 18;
+
+/** Prazo do primeiro contato da equipe: até o fim do expediente do próximo dia útil depois do pagamento. */
+export function contactDeadlineFrom(paidAt: Date): Date {
+  return addBusinessDays(paidAt, 1, CONTACT_DEADLINE_HOUR);
 }

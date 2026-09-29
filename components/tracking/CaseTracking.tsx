@@ -11,13 +11,16 @@ import {
   DOCUMENT_APPROVED_TITLE,
   VALIDATION_PENDING_TEXT,
 } from "@/lib/comprovabet";
+import { formatDeadline } from "@/lib/contact";
 import { cx } from "@/lib/cx";
 import { config } from "@/lib/env";
-import { formatBRL, formatDate } from "@/lib/format";
-import { DEFAULT_NEXT_STEPS, REQUEST_REASONS, labelFor } from "@/lib/options";
+import { formatBRL, formatDate, formatDateTime } from "@/lib/format";
+import { CONTACT_PROMISE } from "@/lib/intake";
+import { CONTACT_CHANNELS, CONTACT_PERIODS, DEFAULT_NEXT_STEPS, EVIDENCE_OPTIONS, LOSS_RANGES, REQUEST_REASONS, labelFor } from "@/lib/options";
 import { CASE_STATUS_LABEL, CASE_STATUS_TONE, clientTimeline, type TimelineState } from "@/lib/status";
 import { IconAlert, IconCheck, IconChevronRight, IconClock, IconFile, IconLogout } from "../icons";
-import { Badge, LedgerRow, LinkButton } from "../ui";
+import { Badge, LedgerRow, LinkButton, Notice } from "../ui";
+import { PreferencesForm } from "./PreferencesForm";
 
 const DOT: Record<TimelineState, string> = {
   done: "bg-navy-900 text-white border-navy-900",
@@ -42,8 +45,85 @@ function Card({ tone = "neutral", title, children }: { tone?: "neutral" | "ok" |
   );
 }
 
+/**
+ * Formulário sem documento, antes do primeiro contato: prazo do contato e as preferências (como comprovar, canal
+ * e horário). Quem fechou a página depois de pagar informa as preferências aqui.
+ */
+function ContactBlock({ data }: { data: ClientCase }) {
+  const deadline = data.contactDeadline ? formatDeadline(data.contactDeadline) : null;
+  const prefs = data.preferences;
+  if (!prefs) {
+    return (
+      <section id="contato" className="scroll-mt-24 rounded-2xl border border-navy-100 bg-navy-50 p-5">
+        <p className="text-lg font-semibold leading-snug text-navy-900">Como você prefere seguir?</p>
+        <p className="mt-2 text-[0.95rem] leading-relaxed text-ink">
+          {CONTACT_PROMISE} Conte como prefere ser contatado{deadline ? ` (prazo: ${deadline})` : ""}.
+        </p>
+        <div className="mt-5 rounded-2xl bg-surface p-4 sm:p-5">
+          <PreferencesForm initial={{ evidence: null, contactChannel: null, contactPeriod: null }} submitLabel="Salvar preferências" />
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section id="contato" className="scroll-mt-24 rounded-2xl border border-navy-100 bg-navy-50 p-5">
+      <p className="flex items-center gap-2 text-lg font-semibold leading-snug text-navy-900">
+        <IconClock size={20} className="shrink-0" /> Nossa equipe vai entrar em contato
+      </p>
+      <p className="mt-2 text-[0.95rem] leading-relaxed text-ink">
+        {deadline ? (
+          <>
+            Prazo: <strong className="font-semibold">{deadline}</strong>. A equipe verifica com você quais documentos são necessários para
+            prosseguir.
+          </>
+        ) : (
+          CONTACT_PROMISE
+        )}
+      </p>
+      <dl className="mt-4 grid gap-x-6 gap-y-2 rounded-xl bg-surface px-4 py-3 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="text-muted">Comprovação</dt>
+          <dd className="font-medium text-ink">{labelFor(EVIDENCE_OPTIONS, prefs.evidence)}</dd>
+        </div>
+        <div>
+          <dt className="text-muted">Contato por</dt>
+          <dd className="font-medium text-ink">{labelFor(CONTACT_CHANNELS, prefs.channel)}</dd>
+        </div>
+        <div>
+          <dt className="text-muted">Horário</dt>
+          <dd className="font-medium text-ink">{labelFor(CONTACT_PERIODS, prefs.contactPeriod)}</dd>
+        </div>
+      </dl>
+      <details className="group mt-3">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-lg px-1 py-1 text-sm font-medium text-navy-700 [&::-webkit-details-marker]:hidden">
+          Alterar preferências
+          <IconChevronRight size={15} className="transition-transform group-open:rotate-90" />
+        </summary>
+        <div className="mt-3 rounded-2xl bg-surface p-4 sm:p-5">
+          <PreferencesForm
+            initial={{ evidence: prefs.evidence, contactChannel: prefs.channel, contactPeriod: prefs.contactPeriod }}
+            submitLabel="Salvar alterações"
+          />
+        </div>
+      </details>
+    </section>
+  );
+}
+
 /** O que o solicitante precisa saber (e fazer) agora, conforme a etapa do caso. */
 function StageBlock({ data }: { data: ClientCase }) {
+  // Formulário sem documento: até o primeiro contato, o que importa é o contato da equipe.
+  if (data.contactDeadline && data.status === "submitted") {
+    if (!data.contactedAt) return <ContactBlock data={data} />;
+    return (
+      <Card tone="info" title="Contato realizado">
+        <p>
+          Nossa equipe entrou em contato em {formatDateTime(data.contactedAt)}. Siga as orientações combinadas: quando for preciso enviar
+          documentos, o pedido aparece aqui no acompanhamento.
+        </p>
+      </Card>
+    );
+  }
   switch (data.status) {
     case "submitted":
     case "documents_received":
@@ -160,7 +240,14 @@ function StageBlock({ data }: { data: ClientCase }) {
   }
 }
 
-export function CaseTracking({ data }: { data: ClientCase }) {
+const PREFERENCE_NOTICES: Record<string, { tone: "ok" | "warn"; text: string }> = {
+  ok: { tone: "ok", text: "Preferências salvas. A equipe vai usar essas informações no contato." },
+  incompleto: { tone: "warn", text: "Escolha uma opção em cada pergunta para salvar as preferências." },
+  fechado: { tone: "warn", text: "A equipe já fez o primeiro contato: as preferências não podem mais ser alteradas por aqui." },
+};
+
+export function CaseTracking({ data, preferencesNotice }: { data: ClientCase; preferencesNotice?: string }) {
+  const notice = preferencesNotice ? PREFERENCE_NOTICES[preferencesNotice] : undefined;
   const timeline = clientTimeline({
     status: data.status,
     paymentStatus: data.paymentStatus,
@@ -170,6 +257,8 @@ export function CaseTracking({ data }: { data: ClientCase }) {
     hasComprovaBet: data.hasComprovaBet,
     documentApprovedAt: data.documentApprovedAt,
     paymentConfirmedAt: data.paymentConfirmedAt,
+    contactDeadline: data.contactDeadline,
+    contactedAt: data.contactedAt,
   });
   // O prazo da análise conta a partir do pagamento (casos antigos mantêm o prazo original).
   const showDeadline =
@@ -192,6 +281,8 @@ export function CaseTracking({ data }: { data: ClientCase }) {
         <span className="text-sm text-ink-soft">Etapa atual:</span>
         <Badge tone={CASE_STATUS_TONE[data.status]}>{CASE_STATUS_LABEL[data.status]}</Badge>
       </div>
+
+      {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
 
       <StageBlock data={data} />
 
@@ -258,7 +349,11 @@ export function CaseTracking({ data }: { data: ClientCase }) {
       <section className="rounded-2xl border border-line bg-surface px-5 pb-2 pt-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">Valores</h2>
         <dl className="mt-1 divide-y divide-dashed divide-line-strong">
-          <LedgerRow label="Perda declarada" hint="Informada por você" value={formatBRL(data.declaredLossCents)} />
+          {data.lossRange ? (
+            <LedgerRow label="Perdas informadas" hint="Faixa informada por você" value={labelFor(LOSS_RANGES, data.lossRange)} />
+          ) : (
+            <LedgerRow label="Perda declarada" hint="Informada por você" value={formatBRL(data.declaredLossCents ?? 0)} />
+          )}
           <LedgerRow
             label="Valor documentalmente identificado"
             hint="Conferido a partir dos documentos"

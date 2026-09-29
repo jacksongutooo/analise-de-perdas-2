@@ -4,6 +4,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isRateLimited, logAccess } from "@/lib/audit";
 import { clearTrackingSession, getTrackingCaseId, setTrackingSession } from "@/lib/auth/tracking";
+import { preferencesSchema } from "@/lib/cases/submission";
+import { saveContactPreferences } from "@/lib/cases/submit";
 import { PAYMENT_NOTICE, SERVICE_TERMS_CHECKBOX, SERVICE_TERMS_VERSION } from "@/lib/comprovabet";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/env";
@@ -88,6 +90,29 @@ export async function finishAdditionalDocuments(): Promise<void> {
       : []),
   ]);
   redirect("/acompanhar");
+}
+
+/**
+ * Preferências de contato informadas no acompanhamento (formulário sem documento): como comprovar, canal e
+ * horário. Valem até o primeiro contato da equipe.
+ */
+export async function saveTrackingPreferences(formData: FormData): Promise<void> {
+  const caseId = await getTrackingCaseId();
+  if (!caseId) redirect("/acompanhar");
+  const c = await prisma.case.findUnique({ where: { id: caseId }, select: { isDemo: true, contactDeadline: true } });
+  if (!c || c.isDemo !== config.demoMode || !c.contactDeadline) redirect("/acompanhar");
+  const parsed = preferencesSchema.safeParse({
+    evidence: formData.get("evidence"),
+    channel: formData.get("channel"),
+    contactPeriod: formData.get("contactPeriod"),
+  });
+  if (!parsed.success) redirect("/acompanhar?preferencias=incompleto#contato");
+  const saved = await saveContactPreferences(caseId, parsed.data);
+  if (saved) {
+    const h = await headers();
+    await logAccess({ action: "case.preferences", targetType: "case", targetId: caseId, ip: clientIp(h), userAgent: userAgent(h) });
+  }
+  redirect(`/acompanhar?preferencias=${saved ? "ok" : "fechado"}#contato`);
 }
 
 /**

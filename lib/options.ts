@@ -66,16 +66,63 @@ export const PERIODS: Option<PeriodValue>[] = [
   { value: "over_12m", label: "Mais de 12 meses" },
 ];
 
+// ─── Formulário sem documento ────────────────────────────────────────────
+/** Já pediu o estorno dessas perdas? A solicitação é feita uma única vez por CPF: "Sim" encerra o formulário. */
+export const PREVIOUS_REQUEST_VALUES = ["no", "yes"] as const;
+export type PreviousRequestValue = (typeof PREVIOUS_REQUEST_VALUES)[number];
+export const PREVIOUS_REQUESTS: Option<PreviousRequestValue>[] = [
+  { value: "no", label: "Não, nunca pedi", description: "Esta seria a primeira solicitação do meu CPF." },
+  { value: "yes", label: "Sim, já pedi", description: "Já solicitei o estorno dessas perdas antes." },
+];
+
+/** Faixa de perda: o cliente não precisa saber o valor exato para começar. */
+export const LOSS_RANGE_VALUES = ["up_to_1k", "from_1k_to_5k", "from_5k_to_20k", "from_20k_to_50k", "over_50k"] as const;
+export type LossRangeValue = (typeof LOSS_RANGE_VALUES)[number];
+export const LOSS_RANGES: Option<LossRangeValue>[] = [
+  { value: "up_to_1k", label: "Até R$ 1.000" },
+  { value: "from_1k_to_5k", label: "De R$ 1.000 a R$ 5.000" },
+  { value: "from_5k_to_20k", label: "De R$ 5.000 a R$ 20.000" },
+  { value: "from_20k_to_50k", label: "De R$ 20.000 a R$ 50.000" },
+  { value: "over_50k", label: "Mais de R$ 50.000" },
+];
+
+// ─── Preferências depois do pagamento ────────────────────────────────────
+export const EVIDENCE_VALUES = ["bank_statement", "comprovabet", "team_guidance"] as const;
+export type EvidenceValue = (typeof EVIDENCE_VALUES)[number];
+export const EVIDENCE_OPTIONS: Option<EvidenceValue>[] = [
+  { value: "bank_statement", label: "Extrato bancário em PDF", description: "O extrato do seu banco mostra os PIX feitos para as casas de apostas." },
+  { value: "comprovabet", label: "ComprovaBet", description: "Se você tiver o documento em mãos." },
+  { value: "team_guidance", label: "Não tenho documentos", description: "Quero que a equipe me oriente." },
+];
+
+/** Frase com a preferência de comprovação, para a confirmação ao cliente. */
+export const EVIDENCE_SUMMARY: Record<EvidenceValue, string> = {
+  bank_statement: "Comprovação pelo extrato bancário em PDF.",
+  comprovabet: "Comprovação pelo ComprovaBet.",
+  team_guidance: "A equipe vai orientar você sobre os documentos.",
+};
+
+export const CONTACT_CHANNEL_VALUES = ["whatsapp", "phone", "email"] as const;
+export type ContactChannelValue = (typeof CONTACT_CHANNEL_VALUES)[number];
+export const CONTACT_CHANNELS: Option<ContactChannelValue>[] = [
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "phone", label: "Ligação" },
+  { value: "email", label: "E-mail" },
+];
+
+export const CONTACT_PERIOD_VALUES = ["morning", "afternoon", "evening"] as const;
+export type ContactPeriodValue = (typeof CONTACT_PERIOD_VALUES)[number];
+export const CONTACT_PERIODS: Option<ContactPeriodValue>[] = [
+  { value: "morning", label: "Manhã" },
+  { value: "afternoon", label: "Tarde" },
+  { value: "evening", label: "Noite" },
+];
+
 // ─── Etapa 5: controle das apostas e o que aconteceu ─────────────────────
 // A maior parte dos casos envolve perda de controle das apostas. A primeira pergunta separa esses casos;
 // a segunda mostra só as situações que fazem sentido para cada resposta.
 export const CONTROL_LOSS_VALUES = ["yes", "sometimes", "no"] as const;
 export type ControlLossValue = (typeof CONTROL_LOSS_VALUES)[number];
-export const CONTROL_LOSS: Option<ControlLossValue>[] = [
-  { value: "yes", label: "Sim", description: "Apostava mesmo quando queria parar." },
-  { value: "sometimes", label: "Em alguns momentos", description: "Houve períodos em que apostei mais do que queria." },
-  { value: "no", label: "Não", description: "Perdi dinheiro por outro motivo." },
-];
 export const CONTROL_LOSS_SUMMARY: Record<ControlLossValue, string> = {
   yes: "Perdeu o controle das apostas",
   sometimes: "Perdeu o controle em alguns momentos",
@@ -166,11 +213,10 @@ export const DOC_CATEGORIES: (Option<DocCategoryValue> & { short: string })[] = 
   { value: "pix_receipt", label: "Comprovante PIX", short: "Comprovante PIX" },
   { value: "other", label: "Outro documento", short: "Outro" },
 ];
-/** Na solicitação inicial o documento principal é o ComprovaBet anual. Outros tipos só como complemento. */
-export const INITIAL_DOC_CATEGORY_VALUES = ["comprovabet"] as const;
-export type InitialDocCategory = (typeof INITIAL_DOC_CATEGORY_VALUES)[number];
 
 export const REQUEST_REASON_VALUES = [
+  "bank_statement_needed",
+  "comprovabet_needed",
   "illegible_file",
   "cut_document",
   "cpf_mismatch",
@@ -186,6 +232,8 @@ export const REQUEST_REASON_VALUES = [
 ] as const;
 export type RequestReasonValue = (typeof REQUEST_REASON_VALUES)[number];
 export const REQUEST_REASONS: Option<RequestReasonValue>[] = [
+  { value: "bank_statement_needed", label: "Extrato bancário com os PIX para as casas de apostas" },
+  { value: "comprovabet_needed", label: "ComprovaBet" },
   { value: "illegible_file", label: "Arquivo ilegível" },
   { value: "cut_document", label: "Documento cortado" },
   { value: "cpf_mismatch", label: "Documento de outro CPF" },
@@ -217,7 +265,7 @@ export function commitmentText(reviewDays: number): string {
 }
 
 export const PRIVACY_CONSENT_TEXT =
-  "Concordo com o tratamento dos meus dados, das respostas sobre as minhas apostas e dos documentos enviados para a análise desta solicitação.";
+  "Concordo com o tratamento dos meus dados, das respostas sobre as minhas apostas e dos documentos que eu enviar para a análise desta solicitação.";
 
 export const NO_PASSWORD_NOTICE =
   "Nunca solicitaremos sua senha da plataforma, senha bancária, código SMS ou código de autenticação.";

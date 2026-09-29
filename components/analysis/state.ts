@@ -1,69 +1,46 @@
-// Estado do formulário em etapas: telas, validação por etapa, cálculo e salvamento automático.
+// Estado do formulário em etapas: telas, validação por etapa e salvamento automático.
 import { isValidCpf } from "@/lib/cpf";
 import { isValidEmail, normalizePhoneBR } from "@/lib/format";
-import type { PreAnalysisStatus } from "@/lib/documents/pre-analysis";
-import { PLATFORMS, situationValuesFor, type BetTypeValue, type ControlLossValue, type PeriodValue, type SituationValue } from "@/lib/options";
+import { ALREADY_REQUESTED_MESSAGE } from "@/lib/intake";
+import {
+  PLATFORMS,
+  type ContactChannelValue,
+  type ContactPeriodValue,
+  type EvidenceValue,
+  type LossRangeValue,
+  type PeriodValue,
+  type PreviousRequestValue,
+} from "@/lib/options";
 
-export type Screen =
-  | "type"
-  | "typeDetail"
-  | "platforms"
-  | "period"
-  | "amounts"
-  | "balance"
-  | "control"
-  | "situation"
-  | "documents"
-  | "analysis"
-  | "commitment"
-  | "contact"
-  | "review"
-  | "payment";
+export type Screen = "previous" | "platforms" | "period" | "loss" | "contact" | "result" | "payment" | "preferences";
 
-export const TOTAL_STEPS = 7;
+export const TOTAL_STEPS = 5;
 
 /**
- * Cada etapa numerada tem no máximo 1 ou 2 perguntas; algumas ocupam duas telas curtas.
- * Os dados do solicitante (com o CPF) vêm antes do ComprovaBet: o documento é conferido com esse CPF.
- * Depois da revisão das respostas, o cliente envia o ComprovaBet, que passa pela pré-análise automática;
- * com ela concluída, segue direto para o pagamento. Só com o pagamento aprovado o botão "Solicitar análise" aparece.
+ * Cinco perguntas curtas, sem documento: primeira solicitação do CPF, casas, período, faixa de perda e os dados
+ * do solicitante. Em seguida, o resultado na hora e o pagamento da taxa por PIX. Com o pagamento confirmado, o
+ * cliente informa como prefere seguir, e a equipe entra em contato em até 1 dia útil.
  */
 export const SCREENS: { id: Screen; step: number | null; label?: string }[] = [
-  { id: "type", step: 1 },
-  { id: "typeDetail", step: 1 },
+  { id: "previous", step: 1 },
   { id: "platforms", step: 2 },
   { id: "period", step: 3 },
-  { id: "amounts", step: 4 },
-  { id: "balance", step: 4 },
-  { id: "control", step: 5 },
-  { id: "situation", step: 5 },
-  { id: "contact", step: 6 },
-  { id: "commitment", step: null, label: "Compromisso" },
-  { id: "review", step: null, label: "Revisão" },
-  { id: "documents", step: 7 },
-  { id: "analysis", step: null, label: "Pré-análise" },
+  { id: "loss", step: 4 },
+  { id: "contact", step: 5 },
+  { id: "result", step: null, label: "Resultado" },
   { id: "payment", step: null, label: "Pagamento" },
+  { id: "preferences", step: null, label: "Contato com a equipe" },
 ];
 
 export type WizardData = {
-  betType: BetTypeValue | null;
-  sportsKind: string | null;
-  casinoGames: string[];
-  mainLossArea: string | null;
+  /** Já pediu o estorno dessas perdas? "yes" encerra o formulário (uma solicitação por CPF). */
+  previousRequest: PreviousRequestValue | null;
   platforms: string[];
   otherPlatformEnabled: boolean;
   customPlatforms: string[];
   period: PeriodValue | null;
-  depositsCents: number | null;
-  withdrawalsCents: number | null;
-  hasBalance: boolean | null;
-  balanceCents: number | null;
-  /** Etapa 5: as apostas saíram do controle? */
-  controlLoss: ControlLossValue | null;
-  situations: SituationValue[];
-  situationOther: string;
+  lossRange: LossRangeValue | null;
   privacyConsent: boolean;
-  commitment: boolean;
   fullName: string;
   /** CPF digitado (somente dígitos). Fica só na memória: nunca vai para o salvamento automático. */
   cpf: string;
@@ -72,28 +49,22 @@ export type WizardData = {
   email: string;
   whatsapp: string;
   isAdult: boolean;
-  /** Aceite das condições do serviço na tela de pagamento (registrado no servidor ao abrir o pagamento). */
+  /** Aceite das condições do serviço na tela de pagamento (registrado no servidor ao gerar o PIX). */
   termsAccepted: boolean;
+  /** Preferências depois do pagamento. */
+  evidence: EvidenceValue | null;
+  contactChannel: ContactChannelValue | null;
+  contactPeriod: ContactPeriodValue | null;
 };
 
 export const EMPTY_DATA: WizardData = {
-  betType: null,
-  sportsKind: null,
-  casinoGames: [],
-  mainLossArea: null,
+  previousRequest: null,
   platforms: [],
   otherPlatformEnabled: false,
   customPlatforms: [""],
   period: null,
-  depositsCents: null,
-  withdrawalsCents: null,
-  hasBalance: null,
-  balanceCents: null,
-  controlLoss: null,
-  situations: [],
-  situationOther: "",
+  lossRange: null,
   privacyConsent: false,
-  commitment: false,
   fullName: "",
   cpf: "",
   cpfMasked: null,
@@ -101,18 +72,12 @@ export const EMPTY_DATA: WizardData = {
   whatsapp: "",
   isAdult: false,
   termsAccepted: false,
+  evidence: null,
+  contactChannel: null,
+  contactPeriod: null,
 };
 
 export type DraftCreds = { id: string; token: string };
-export type DraftFile = {
-  id: string;
-  name: string;
-  size: number;
-  platform: string | null;
-  category: string;
-  createdAt: string;
-  manualCheck?: boolean;
-};
 
 /** PIX em aberto (QR Code e copia e cola), como devolvido pelo servidor. */
 export type PixState = {
@@ -125,15 +90,13 @@ export type PixState = {
   createdAt: string;
 };
 
-/** Situação do pagamento da análise, como devolvida por GET /api/draft/payment (lida do banco do site). */
+/** Situação do pagamento da taxa, como devolvida por GET /api/draft/payment (lida do banco do site). */
 export type PaymentState = {
   status: "none" | "pending" | "paid" | "failed" | "cancelled" | "expired" | "refunded";
   method: string | null;
   paidAt: string | null;
   termsAcceptedAt: string | null;
   protocol: string | null;
-  /** Resultado da última pré-análise automática gravada no servidor. */
-  preAnalysis: PreAnalysisStatus | null;
   /** PIX aguardando pagamento (só enquanto está em aberto). */
   pix: PixState | null;
   /** PIX simulado (modo demonstração). */
@@ -141,7 +104,7 @@ export type PaymentState = {
 };
 
 export const TERMS_REQUIRED_MESSAGE = "Para continuar, marque a declaração de aceite.";
-export const PAYMENT_REQUIRED_MESSAGE = "Conclua o pagamento do PIX para solicitar a análise.";
+export const PAYMENT_REQUIRED_MESSAGE = "Conclua o pagamento do PIX para continuar.";
 
 export function draftHeaders(creds: DraftCreds): Record<string, string> {
   return { "x-draft-id": creds.id, "x-draft-token": creds.token };
@@ -151,7 +114,7 @@ export function cleanPlatformName(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().slice(0, 60);
 }
 
-/** Nomes das plataformas selecionadas, na ordem em que aparecem, sem repetição. */
+/** Nomes das casas selecionadas, na ordem em que aparecem, sem repetição. */
 export function selectedPlatformNames(d: WizardData): string[] {
   const names: string[] = PLATFORMS.filter((p) => d.platforms.includes(p.slug)).map((p) => p.name);
   if (d.otherPlatformEnabled) {
@@ -164,29 +127,7 @@ export function selectedPlatformNames(d: WizardData): string[] {
   return names;
 }
 
-export function attachedFiles(files: DraftFile[], names: string[]): DraftFile[] {
-  const lower = new Set(names.map((n) => n.toLowerCase()));
-  return files.filter((f) => f.category !== "comprovabet" && f.platform && lower.has(f.platform.toLowerCase()));
-}
-
-/** Arquivos do ComprovaBet já enviados no rascunho. */
-export function comprovabetFiles(files: DraftFile[]): DraftFile[] {
-  return files.filter((f) => f.category === "comprovabet");
-}
-
-/** Situações marcadas que valem para a resposta atual sobre o controle das apostas. */
-export function currentSituations(d: WizardData): SituationValue[] {
-  const allowed = situationValuesFor(d.controlLoss);
-  return d.situations.filter((s) => allowed.includes(s));
-}
-
-/** Perda declarada = depósitos − saques − saldo disponível (negativo vira zero e é sinalizado). */
-export function declaredLoss(d: WizardData): { raw: number; loss: number; needsReview: boolean } {
-  const raw = (d.depositsCents ?? 0) - (d.withdrawalsCents ?? 0) - (d.hasBalance ? (d.balanceCents ?? 0) : 0);
-  return { raw, loss: Math.max(0, raw), needsReview: raw < 0 };
-}
-
-export type ContactErrors = Partial<Record<"fullName" | "cpf" | "email" | "whatsapp" | "isAdult", string>>;
+export type ContactErrors = Partial<Record<"fullName" | "cpf" | "email" | "whatsapp" | "isAdult" | "privacyConsent", string>>;
 
 export function contactErrors(d: WizardData): ContactErrors {
   const errors: ContactErrors = {};
@@ -197,125 +138,79 @@ export function contactErrors(d: WizardData): ContactErrors {
   if (!isValidEmail(d.email)) errors.email = "Informe um e-mail válido.";
   if (!normalizePhoneBR(d.whatsapp)) errors.whatsapp = "Informe um WhatsApp válido com DDD.";
   if (!d.isAdult) errors.isAdult = "O serviço é exclusivo para maiores de 18 anos.";
+  if (!d.privacyConsent) errors.privacyConsent = "Para continuar, autorize o tratamento dos seus dados.";
   return errors;
 }
 
-export type ScreenContext = {
-  fileCount: number;
-  busy: boolean;
-  paid?: boolean;
-  /** Resultado conhecido da pré-análise automática (e a mensagem, quando há pendência). */
-  analysis?: { status: PreAnalysisStatus; message: string } | null;
-};
+export type PreferenceErrors = Partial<Record<"evidence" | "contactChannel" | "contactPeriod", string>>;
 
-export const ANALYSIS_REQUIRED_MESSAGE = "Aguarde a pré-análise do seu ComprovaBet.";
+export function preferenceErrors(d: WizardData): PreferenceErrors {
+  const errors: PreferenceErrors = {};
+  if (!d.evidence) errors.evidence = "Escolha como prefere enviar a comprovação.";
+  if (!d.contactChannel) errors.contactChannel = "Escolha por onde prefere falar com a equipe.";
+  if (!d.contactPeriod) errors.contactPeriod = "Escolha o melhor horário para o contato.";
+  return errors;
+}
 
-export function screenError(screen: Screen, d: WizardData, ctx: ScreenContext): string | null {
+export type ScreenContext = { paid?: boolean };
+
+export function screenError(screen: Screen, d: WizardData, ctx: ScreenContext = {}): string | null {
   switch (screen) {
-    case "type":
-      return d.betType ? null : "Escolha uma opção para continuar.";
-    case "typeDetail":
-      if (d.betType === "sports") return d.sportsKind ? null : "Escolha uma opção para continuar.";
-      if (d.betType === "casino") return d.casinoGames.length ? null : "Escolha ao menos um jogo.";
-      if (d.betType === "both") return d.mainLossArea ? null : "Escolha uma opção para continuar.";
-      return "Volte e informe onde aconteceram suas perdas.";
+    case "previous":
+      if (!d.previousRequest) return "Escolha uma opção para continuar.";
+      return d.previousRequest === "yes" ? ALREADY_REQUESTED_MESSAGE : null;
     case "platforms":
-      if (d.otherPlatformEnabled && !d.customPlatforms.some((n) => cleanPlatformName(n))) return "Informe o nome da plataforma.";
-      return selectedPlatformNames(d).length ? null : "Selecione ao menos uma plataforma.";
+      if (d.otherPlatformEnabled && !d.customPlatforms.some((n) => cleanPlatformName(n))) return "Informe o nome da casa de apostas.";
+      return selectedPlatformNames(d).length ? null : "Selecione ao menos uma casa de apostas.";
     case "period":
       return d.period ? null : "Escolha uma opção para continuar.";
-    case "amounts":
-      return d.depositsCents && d.depositsCents > 0 ? null : "Informe o valor aproximado depositado.";
-    case "balance":
-      if (d.hasBalance === null) return "Informe se ainda existe saldo nas plataformas.";
-      return d.hasBalance && !(d.balanceCents && d.balanceCents > 0) ? "Informe o saldo aproximado." : null;
-    case "control":
-      return d.controlLoss ? null : "Escolha uma opção para continuar.";
-    case "situation": {
-      if (!d.controlLoss) return "Volte e responda se as apostas saíram do seu controle.";
-      const chosen = currentSituations(d);
-      if (!chosen.length) return "Escolha ao menos uma opção.";
-      return chosen.includes("other") && !d.situationOther.trim() ? "Descreva a situação em poucas palavras." : null;
-    }
-    case "documents":
-      if (!d.privacyConsent) return "Para enviar documentos, marque a autorização de tratamento dos dados.";
-      if (ctx.busy) return "Aguarde o envio dos arquivos terminar.";
-      return ctx.fileCount > 0 ? null : "Envie o seu ComprovaBet para continuar.";
-    case "commitment":
-      return d.commitment ? null : "Marque o compromisso para continuar.";
+    case "loss":
+      return d.lossRange ? null : "Escolha uma faixa para continuar.";
     case "contact":
       return Object.values(contactErrors(d))[0] ?? null;
-    case "review":
+    case "result":
       return null;
-    case "analysis":
-      if (!ctx.analysis) return ANALYSIS_REQUIRED_MESSAGE;
-      return ctx.analysis.status === "blocked" ? ctx.analysis.message : null;
     case "payment":
       if (ctx.paid) return null;
       return d.termsAccepted ? PAYMENT_REQUIRED_MESSAGE : TERMS_REQUIRED_MESSAGE;
+    case "preferences":
+      return Object.values(preferenceErrors(d))[0] ?? null;
   }
 }
 
-/** Primeira tela com resposta pendente antes do pagamento (a revisão e o pagamento não têm respostas próprias). */
-export function firstInvalidScreen(d: WizardData, ctx: ScreenContext): Screen | null {
-  return SCREENS.find((s) => s.id !== "review" && s.id !== "payment" && screenError(s.id, d, ctx))?.id ?? null;
-}
-
-/** Arquivos analisados continuam os mesmos? (a pré-análise é refeita quando o ComprovaBet muda) */
-export function sameDocuments(analyzed: readonly string[], current: readonly string[]): boolean {
-  if (analyzed.length !== current.length) return false;
-  const set = new Set(analyzed);
-  return current.every((id) => set.has(id));
+/** Primeira tela com resposta pendente antes do pagamento. */
+export function firstInvalidScreen(d: WizardData): Screen | null {
+  return SCREENS.find((s) => s.step !== null && screenError(s.id, d))?.id ?? null;
 }
 
 /** Liga o campo apontado pelo servidor à tela onde ele é corrigido. */
 export const FIELD_SCREEN: Record<string, Screen> = {
-  betType: "type",
-  sportsKind: "typeDetail",
-  casinoGames: "typeDetail",
-  mainLossArea: "typeDetail",
+  neverRequested: "previous",
   platforms: "platforms",
   customPlatforms: "platforms",
   period: "period",
-  depositsCents: "amounts",
-  withdrawalsCents: "amounts",
-  hasBalance: "balance",
-  balanceCents: "balance",
-  controlLoss: "control",
-  situations: "situation",
-  situationOther: "situation",
-  privacyConsent: "documents",
-  documents: "documents",
-  commitment: "commitment",
+  lossRange: "loss",
   fullName: "contact",
   cpf: "contact",
   email: "contact",
   whatsapp: "contact",
   isAdult: "contact",
+  privacyConsent: "contact",
+  draft: "contact",
   accept: "payment",
   payment: "payment",
-  analysis: "analysis",
+  preferences: "preferences",
 };
 
 export function buildPayload(d: WizardData) {
   return {
-    betType: d.betType,
-    sportsKind: d.betType === "sports" ? d.sportsKind : null,
-    casinoGames: d.betType === "casino" ? d.casinoGames : [],
-    mainLossArea: d.betType === "both" ? d.mainLossArea : null,
+    neverRequested: d.previousRequest === "no",
     platforms: d.platforms,
     otherPlatformEnabled: d.otherPlatformEnabled,
     customPlatforms: d.otherPlatformEnabled ? d.customPlatforms.map(cleanPlatformName).filter(Boolean) : [],
     period: d.period,
-    depositsCents: d.depositsCents ?? 0,
-    withdrawalsCents: d.withdrawalsCents ?? 0,
-    hasBalance: d.hasBalance === true,
-    balanceCents: d.hasBalance ? d.balanceCents : null,
-    controlLoss: d.controlLoss,
-    situations: currentSituations(d),
-    situationOther: currentSituations(d).includes("other") ? d.situationOther.trim() : "",
+    lossRange: d.lossRange,
     privacyConsent: d.privacyConsent,
-    commitment: d.commitment,
     fullName: d.fullName.trim().replace(/\s+/g, " "),
     email: d.email.trim(),
     whatsapp: d.whatsapp,
@@ -323,20 +218,25 @@ export function buildPayload(d: WizardData) {
   };
 }
 
-// ─── Salvamento automático no navegador ───────────────────────────────────
-const STORAGE_KEY = "analise:v1";
+export function buildPreferences(d: WizardData) {
+  return { evidence: d.evidence, channel: d.contactChannel, contactPeriod: d.contactPeriod };
+}
 
-export type SavedProgress = { v: 1; screen: Screen; data: WizardData; draft: DraftCreds | null; savedAt: number };
+// ─── Salvamento automático no navegador ───────────────────────────────────
+// Chave nova para o formulário sem documento: o preenchimento salvo pelo formulário anterior é ignorado.
+const STORAGE_KEY = "analise:v2";
+
+export type SavedProgress = { v: 2; screen: Screen; data: WizardData; draft: DraftCreds | null; savedAt: number };
 
 export function loadProgress(): SavedProgress | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SavedProgress>;
-    if (parsed.v !== 1 || !parsed.data || !SCREENS.some((s) => s.id === parsed.screen)) return null;
+    if (parsed.v !== 2 || !parsed.data || !SCREENS.some((s) => s.id === parsed.screen)) return null;
     const draft = parsed.draft && typeof parsed.draft.id === "string" && typeof parsed.draft.token === "string" ? parsed.draft : null;
     const data = { ...EMPTY_DATA, ...parsed.data, cpf: "" };
-    return { v: 1, screen: parsed.screen as Screen, data, draft, savedAt: Number(parsed.savedAt) || Date.now() };
+    return { v: 2, screen: parsed.screen as Screen, data, draft, savedAt: Number(parsed.savedAt) || Date.now() };
   } catch {
     return null;
   }
@@ -363,13 +263,10 @@ export function clearProgress(): void {
 
 /** Ao retomar, volta para a primeira etapa incompleta anterior à tela salva. */
 export function resumeScreen(saved: Screen, d: WizardData): Screen {
-  // A pré-análise é refeita ao abrir: retomar nela é o mesmo que voltar ao envio do documento.
-  const target: Screen = saved === "analysis" ? "documents" : saved;
-  const savedIndex = SCREENS.findIndex((s) => s.id === target);
+  const savedIndex = SCREENS.findIndex((s) => s.id === saved);
   for (let i = 0; i < savedIndex; i++) {
     const s = SCREENS[i];
-    // Documento e pré-análise dependem do servidor: são conferidos nas próprias telas.
-    if (s && s.id !== "documents" && s.id !== "analysis" && screenError(s.id, d, { fileCount: 1, busy: false })) return s.id;
+    if (s && s.step !== null && screenError(s.id, d)) return s.id;
   }
-  return target;
+  return saved;
 }

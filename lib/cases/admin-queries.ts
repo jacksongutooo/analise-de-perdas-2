@@ -3,7 +3,7 @@ import { cpfDigits, maskCpf } from "@/lib/cpf";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/env";
 import { centsToDecimal, decimalToCents, parseMoneyToCents } from "@/lib/format";
-import { BET_TYPE_VALUES, type BetTypeValue } from "@/lib/options";
+import { BET_TYPE_VALUES, LOSS_RANGE_VALUES, type BetTypeValue, type LossRangeValue } from "@/lib/options";
 import {
   PAYMENT_STATUS_VALUES,
   STATUS_GROUPS,
@@ -28,8 +28,17 @@ export type CaseFilters = {
   min: string;
   max: string;
   payment: string;
+  /** Primeiro contato (formulário sem documento): pendente, atrasado ou feito. */
+  contact: string;
   page: number;
 };
+
+export const CONTACT_FILTERS = [
+  { value: "pendente", label: "Contato pendente (no prazo)" },
+  { value: "atrasado", label: "Contato atrasado" },
+  { value: "a_fazer", label: "Contato a fazer (pendente ou atrasado)" },
+  { value: "feito", label: "Contato feito" },
+] as const;
 
 export function parseCaseFilters(sp: Record<string, string | string[] | undefined>): CaseFilters {
   const get = (key: string) => {
@@ -47,6 +56,7 @@ export function parseCaseFilters(sp: Record<string, string | string[] | undefine
     min: get("min"),
     max: get("max"),
     payment: get("payment"),
+    contact: get("contato"),
     page: Math.max(1, Number.parseInt(get("page") || "1", 10) || 1),
   };
 }
@@ -70,6 +80,11 @@ export function buildCaseWhere(f: CaseFilters): Prisma.CaseWhereInput {
   if ((BET_TYPE_VALUES as readonly string[]).includes(f.type)) and.push({ betType: f.type as BetTypeValue });
   if ((PAYMENT_STATUS_VALUES as readonly string[]).includes(f.payment)) and.push({ paymentStatus: f.payment as PaymentStatusValue });
   if (f.platform) and.push({ platforms: { some: { platformId: f.platform } } });
+  const now = new Date();
+  if (f.contact === "pendente") and.push({ contactDeadline: { gte: now }, contactedAt: null });
+  else if (f.contact === "atrasado") and.push({ contactDeadline: { lt: now }, contactedAt: null });
+  else if (f.contact === "a_fazer") and.push({ contactDeadline: { not: null }, contactedAt: null });
+  else if (f.contact === "feito") and.push({ contactedAt: { not: null } });
   if (f.admin === "none") and.push({ assignedAdminId: null });
   else if (f.admin) and.push({ assignedAdminId: f.admin });
   const from = dateInput(f.from, false);
@@ -120,6 +135,9 @@ export async function listCases(f: CaseFilters) {
         status: true,
         paymentStatus: true,
         declaredLoss: true,
+        lossRange: true,
+        contactDeadline: true,
+        contactedAt: true,
         identifiedLoss: true,
         identifiedSource: true,
         user: { select: { fullName: true, cpf: true } },
@@ -141,7 +159,7 @@ export async function listCases(f: CaseFilters) {
       id: r.id,
       protocol: r.protocol,
       createdAt: r.createdAt,
-      betType: r.betType as BetTypeValue,
+      betType: r.betType as BetTypeValue | null,
       status: r.status as CaseStatusValue,
       paymentStatus: r.paymentStatus as PaymentStatusValue,
       name: r.user.fullName,
@@ -149,7 +167,10 @@ export async function listCases(f: CaseFilters) {
       docStatus: (r.documents[0]?.status ?? null) as DocumentStatusValue | null,
       docCpfCheck: (r.documents[0]?.cpfCheck ?? null) as CpfCheckValue | null,
       platforms: r.platforms.map((p) => p.platform.name),
-      declaredLossCents: decimalToCents(r.declaredLoss) ?? 0,
+      declaredLossCents: decimalToCents(r.declaredLoss),
+      lossRange: r.lossRange as LossRangeValue | null,
+      contactDeadline: r.contactDeadline,
+      contactedAt: r.contactedAt,
       identifiedLossCents: decimalToCents(r.identifiedLoss),
       identifiedSource: r.identifiedSource,
       assignee: r.assignedAdmin?.name ?? null,
@@ -175,10 +196,11 @@ export async function getFilterOptions() {
 
 export async function getDashboard() {
   const where = demoScope();
-  const [byStatus, totals, byType, platformCounts, recent] = await Promise.all([
+  const now = new Date();
+  const [byStatus, totals, byRange, platformCounts, recent, contactPending, contactOverdue] = await Promise.all([
     prisma.case.groupBy({ by: ["status"], where, _count: { _all: true } }),
     prisma.case.aggregate({ where, _sum: { declaredLoss: true, identifiedLoss: true }, _avg: { declaredLoss: true }, _count: { _all: true } }),
-    prisma.case.groupBy({ by: ["betType"], where, _count: { _all: true } }),
+    prisma.case.groupBy({ by: ["lossRange"], where: { ...where, lossRange: { not: null } }, _count: { _all: true } }),
     prisma.casePlatform.groupBy({
       by: ["platformId"],
       where: { case: where },
@@ -190,8 +212,20 @@ export async function getDashboard() {
       where,
       orderBy: { createdAt: "desc" },
       take: 6,
-      select: { id: true, protocol: true, createdAt: true, status: true, declaredLoss: true, user: { select: { fullName: true } } },
+      select: {
+        id: true,
+        protocol: true,
+        createdAt: true,
+        status: true,
+        declaredLoss: true,
+        lossRange: true,
+        contactDeadline: true,
+        contactedAt: true,
+        user: { select: { fullName: true } },
+      },
     }),
+    prisma.case.count({ where: { ...where, contactDeadline: { gte: now }, contactedAt: null } }),
+    prisma.case.count({ where: { ...where, contactDeadline: { lt: now }, contactedAt: null } }),
   ]);
 
   const statusCount = (statuses: readonly string[]) =>
@@ -201,7 +235,8 @@ export async function getDashboard() {
     select: { id: true, name: true },
   });
   const total = totals._count._all;
-  const typeCount = (t: BetTypeValue) => byType.find((b) => b.betType === t)?._count._all ?? 0;
+  const rangeTotal = byRange.reduce((acc, r) => acc + r._count._all, 0);
+  const rangeCount = (r: LossRangeValue) => byRange.find((b) => b.lossRange === r)?._count._all ?? 0;
 
   return {
     total,
@@ -215,7 +250,9 @@ export async function getDashboard() {
     declaredTotalCents: decimalToCents(totals._sum.declaredLoss) ?? 0,
     identifiedTotalCents: decimalToCents(totals._sum.identifiedLoss) ?? 0,
     declaredAverageCents: decimalToCents(totals._avg.declaredLoss) ?? 0,
-    types: BET_TYPE_VALUES.map((t) => ({ type: t, count: typeCount(t), share: total ? typeCount(t) / total : 0 })),
+    /** Primeiro contato (formulário sem documento) ainda por fazer: no prazo e atrasados. */
+    contact: { pending: contactPending, overdue: contactOverdue },
+    ranges: LOSS_RANGE_VALUES.map((r) => ({ range: r, count: rangeCount(r), share: rangeTotal ? rangeCount(r) / rangeTotal : 0 })),
     platforms: platformCounts.map((p) => ({
       id: p.platformId,
       name: platformNames.find((n) => n.id === p.platformId)?.name ?? "—",
@@ -227,7 +264,10 @@ export async function getDashboard() {
       createdAt: r.createdAt,
       status: r.status as CaseStatusValue,
       name: r.user.fullName,
-      declaredLossCents: decimalToCents(r.declaredLoss) ?? 0,
+      declaredLossCents: decimalToCents(r.declaredLoss),
+      lossRange: r.lossRange as LossRangeValue | null,
+      contactDeadline: r.contactDeadline,
+      contactedAt: r.contactedAt,
     })),
   };
 }

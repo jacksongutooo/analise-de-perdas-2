@@ -3,13 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PreAnalysis } from "@/lib/documents/pre-analysis";
-import type { BetTypeValue } from "@/lib/options";
 import { PIX_ERROR_MESSAGE } from "@/lib/payments/types";
 import { IconCheck, IconX } from "../icons";
 import { Logo } from "../site";
 import { Button } from "../ui";
-import { DocumentsStep } from "./DocumentsStep";
 import {
   EMPTY_DATA,
   FIELD_SCREEN,
@@ -17,74 +14,59 @@ import {
   TERMS_REQUIRED_MESSAGE,
   TOTAL_STEPS,
   buildPayload,
+  buildPreferences,
   clearProgress,
-  comprovabetFiles,
   draftHeaders,
   firstInvalidScreen,
   loadProgress,
   resumeScreen,
-  sameDocuments,
   saveProgress,
   screenError,
   selectedPlatformNames,
   type DraftCreds,
-  type DraftFile,
   type PaymentState,
   type Screen,
   type WizardData,
 } from "./state";
 import {
-  AmountsStep,
-  AnalysisStep,
-  BalanceStep,
-  CommitmentStep,
   ContactStep,
-  ControlStep,
+  LossStep,
   PaymentStep,
   PeriodStep,
   PlatformsStep,
-  ReviewStep,
-  SituationStep,
-  TypeDetailStep,
-  TypeStep,
+  PreferencesStep,
+  PreviousStep,
+  ResultStep,
   type PaymentSettings,
 } from "./steps";
 
-export type WizardSettings = { maxUploadMb: number; reviewDays: number; comprovabetYear: number; payment: PaymentSettings };
+export type WizardSettings = { payment: PaymentSettings };
 
 /** Enquanto o PIX aguarda pagamento, a tela pergunta ao nosso servidor a cada 4 s (por até 30 minutos). */
 const PAYMENT_POLL_MS = 4000;
 const PAYMENT_POLL_ROUNDS = 450;
 
+const OFFLINE = "Sem conexão. Verifique sua internet e tente novamente.";
+
 export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [screen, setScreen] = useState<Screen>("type");
+  const [screen, setScreen] = useState<Screen>("previous");
   const [data, setData] = useState<WizardData>(EMPTY_DATA);
   const [draft, setDraftState] = useState<DraftCreds | null>(null);
-  const [files, setFiles] = useState<DraftFile[]>([]);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [resumed, setResumed] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [filesLoading, setFilesLoading] = useState(false);
   const [savingCpf, setSavingCpf] = useState(false);
   const [cpfServerError, setCpfServerError] = useState<string | null>(null);
-  // Pagamento da análise por PIX (antes da solicitação).
+  // Pagamento da taxa por PIX (antes do registro da solicitação).
   const [payment, setPayment] = useState<PaymentState | null>(null);
   const [paymentLoaded, setPaymentLoaded] = useState(false);
   const [paymentChecking, setPaymentChecking] = useState(false);
   const [paying, setPaying] = useState(false);
   const [simulating, setSimulating] = useState(false);
-  // Pré-análise automática do ComprovaBet (tela logo depois do envio do documento).
-  const [analysisResult, setAnalysisResult] = useState<PreAnalysis | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [analysisRunning, setAnalysisRunning] = useState(false);
-  const [analysisAnimate, setAnalysisAnimate] = useState(true);
-  const [analysisSettled, setAnalysisSettled] = useState(false);
 
   const draftRef = useRef<DraftCreds | null>(null);
   const restoredDraftId = useRef<string | null>(null);
@@ -111,7 +93,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
       setScreen(resumeScreen(saved.screen, saved.data));
       setSavedAt(saved.savedAt);
       // Na tela de pagamento, a própria situação do PIX aparece: sem o aviso de retomada.
-      setResumed(saved.screen !== "type" && saved.screen !== "payment");
+      setResumed(saved.screen !== "previous" && saved.screen !== "payment" && saved.screen !== "preferences");
     }
     setReady(true);
   }, [setDraft]);
@@ -122,7 +104,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     latest.current = { screen, data, draft };
     const timeout = window.setTimeout(() => {
       const now = Date.now();
-      if (saveProgress({ v: 1, screen, data, draft, savedAt: now })) setSavedAt(now);
+      if (saveProgress({ v: 2, screen, data, draft, savedAt: now })) setSavedAt(now);
     }, 350);
     return () => window.clearTimeout(timeout);
   }, [ready, screen, data, draft]);
@@ -130,20 +112,29 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
   // Garante o salvamento se a página for fechada ou recarregada antes do intervalo acima.
   useEffect(() => {
     const flush = () => {
-      if (latest.current && !finished.current) saveProgress({ v: 1, ...latest.current, savedAt: Date.now() });
+      if (latest.current && !finished.current) saveProgress({ v: 2, ...latest.current, savedAt: Date.now() });
     };
     window.addEventListener("pagehide", flush);
     return () => window.removeEventListener("pagehide", flush);
   }, []);
 
+  const goTo = useCallback((target: Screen) => {
+    if (advanceTimer.current) window.clearTimeout(advanceTimer.current);
+    setError(null);
+    setCpfServerError(null);
+    setAttempted(false);
+    setResumed(false);
+    setScreen(target);
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  /** O rascunho no servidor expirou: o CPF (guardado nele) precisa ser informado de novo. */
   const invalidateDraft = useCallback(() => {
     restoredDraftId.current = null;
     setDraft(null);
     draftPromise.current = null;
-    setFiles([]);
-    // O CPF ficava registrado no rascunho expirado: precisa ser informado de novo.
+    setPayment(null);
     setData((current) => ({ ...current, cpfMasked: null }));
-    setNotice("Sua sessão de envio anterior expirou. Confira seu CPF e envie o ComprovaBet novamente.");
   }, [setDraft]);
 
   /**
@@ -163,7 +154,6 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
         if (draftRef.current?.id !== creds.id) return null;
         if (res.status === 401) {
           invalidateDraft();
-          setPayment(null);
           return null;
         }
         if (!res.ok) return null;
@@ -180,51 +170,27 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     [invalidateDraft],
   );
 
-  // Ao retomar um preenchimento salvo, busca os arquivos já enviados (ex.: ao voltar outro dia).
-  // Só para o rascunho restaurado: num rascunho novo, a lista local já é a fonte certa.
+  // Ao retomar um preenchimento salvo, confere o rascunho no servidor (ex.: ao voltar outro dia).
   const draftId = draft?.id ?? null;
   useEffect(() => {
     const creds = draftRef.current;
-    if (!ready || !draftId || !creds || draftId !== restoredDraftId.current) {
-      setFilesLoading(false);
-      return;
-    }
+    if (!ready || !draftId || !creds || draftId !== restoredDraftId.current) return;
     let cancelled = false;
-    setFilesLoading(true);
-    fetch("/api/draft/files", { headers: draftHeaders(creds), cache: "no-store" })
+    fetch("/api/draft", { headers: draftHeaders(creds), cache: "no-store" })
       .then(async (res) => {
         if (cancelled) return;
         if (res.ok) {
-          const body = (await res.json()) as { files?: DraftFile[]; cpfMasked?: string | null };
-          setFiles((current) => {
-            const known = new Set(current.map((f) => f.id));
-            return [...current, ...(body.files ?? []).filter((f) => !known.has(f.id))];
-          });
+          const body = (await res.json()) as { cpfMasked?: string | null };
           setData((current) => ({ ...current, cpfMasked: body.cpfMasked ?? null }));
         } else if (res.status === 401) {
           invalidateDraft();
         }
-        // 409: a solicitação já foi concluída com o pagamento aprovado (a tela de pagamento mostra o protocolo).
       })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setFilesLoading(false);
-      });
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
   }, [ready, draftId, invalidateDraft]);
-
-  // Avisa antes de sair da página durante um envio.
-  useEffect(() => {
-    if (!busy) return;
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [busy]);
 
   const ensureDraft = useCallback(async (): Promise<DraftCreds> => {
     if (draftRef.current) return draftRef.current;
@@ -232,7 +198,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
       draftPromise.current = (async () => {
         const res = await fetch("/api/draft", { method: "POST" });
         const body = (await res.json().catch(() => ({}))) as { id?: string; token?: string; error?: string };
-        if (!res.ok || !body.id || !body.token) throw new Error(body.error ?? "Não foi possível iniciar o envio. Tente novamente.");
+        if (!res.ok || !body.id || !body.token) throw new Error(body.error ?? "Não foi possível continuar agora. Tente novamente.");
         const creds = { id: body.id, token: body.token };
         setDraft(creds);
         return creds;
@@ -242,8 +208,6 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     }
     return draftPromise.current;
   }, [setDraft]);
-
-  const getDraft = useCallback(() => draftRef.current, []);
 
   const onPaymentScreen = screen === "payment";
   const paid = payment?.status === "paid";
@@ -282,7 +246,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     };
   }, [onPaymentScreen, paymentStatus, refreshPayment]);
 
-  // O PIX em aberto saiu da tela (pago, vencido ou cancelado): volta ao topo, onde fica o aviso da nova situação.
+  // O PIX em aberto saiu da tela (vencido ou cancelado): volta ao topo, onde fica o aviso da nova situação.
   const previousStatus = useRef<string | null>(null);
   useEffect(() => {
     const before = previousStatus.current;
@@ -304,36 +268,18 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
   const index = Math.max(0, SCREENS.findIndex((s) => s.id === screen));
   const meta = SCREENS[index] ?? SCREENS[0]!;
   const platformNames = useMemo(() => selectedPlatformNames(data), [data]);
-  const sentComprovaBet = useMemo(() => comprovabetFiles(files), [files]);
-  const comprovabetIds = useMemo(() => sentComprovaBet.map((f) => f.id), [sentComprovaBet]);
-  const year = settings.comprovabetYear;
-  // Resultado da pré-análise que vale para os arquivos atuais (ou o gravado no servidor, ao retomar o pagamento).
-  const freshAnalysis = analysisResult && sameDocuments(analysisResult.documentIds, comprovabetIds) ? analysisResult : null;
-  const analysisCtx = freshAnalysis
-    ? { status: freshAnalysis.status, message: freshAnalysis.message }
-    : payment?.preAnalysis
-      ? { status: payment.preAnalysis, message: "Refaça a pré-análise do seu ComprovaBet." }
-      : null;
   const progress = Math.round(((index + 1) / SCREENS.length) * 100);
-
-  const goTo = useCallback((target: Screen) => {
-    if (advanceTimer.current) window.clearTimeout(advanceTimer.current);
-    setError(null);
-    setCpfServerError(null);
-    setAttempted(false);
-    setResumed(false);
-    setScreen(target);
-    window.scrollTo({ top: 0 });
-  }, []);
 
   useEffect(() => {
     if (ready) headingRef.current?.focus({ preventScroll: true });
   }, [screen, ready]);
 
-  // Com o pagamento aprovado, as respostas ficam fechadas: resta só solicitar a análise.
+  // Com o pagamento confirmado, as respostas ficam fechadas: resta dizer como prefere ser contatado.
+  // Sem pagamento confirmado, a tela das preferências ainda não vale (ex.: preenchimento retomado).
   useEffect(() => {
-    if (paid && screen !== "payment") goTo("payment");
-  }, [paid, screen, goTo]);
+    if (paid && screen !== "preferences") goTo("preferences");
+    else if (!paid && paymentLoaded && screen === "preferences") goTo("payment");
+  }, [paid, paymentLoaded, screen, goTo]);
 
   // De volta à tela de pagamento depois de rever as respostas com um PIX em aberto: grava as respostas de novo
   // no servidor, que devolve o mesmo PIX (nunca gera outra cobrança nesse caso).
@@ -345,29 +291,15 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     resyncPixRef.current();
   }, [ready, screen]);
 
-  // Ao abrir a tela da pré-análise: refaz a conferência (ou mostra o resultado já obtido para os mesmos arquivos).
-  const runAnalysisRef = useRef<() => void>(() => undefined);
-  runAnalysisRef.current = () => void runAnalysis();
-  const freshAnalysisRef = useRef(freshAnalysis);
-  freshAnalysisRef.current = freshAnalysis;
-  useEffect(() => {
-    if (!ready || screen !== "analysis") return;
-    if (freshAnalysisRef.current) {
-      setAnalysisAnimate(false);
-      setAnalysisError(null);
-      return;
-    }
-    runAnalysisRef.current();
-  }, [ready, screen]);
-  const onAnalysisSettled = useCallback(() => setAnalysisSettled(true), []);
-
   const update = useCallback((patch: Partial<WizardData>) => {
     setData((current) => ({ ...current, ...patch }));
     setError(null);
     if ("cpf" in patch) setCpfServerError(null);
   }, []);
 
-  const advanceFrom = (from: Screen) => {
+  /** Escolha única: avança sozinho depois de um instante (dá tempo de ver a marcação). */
+  const chooseAndAdvance = (patch: Partial<WizardData>, from: Screen) => {
+    update(patch);
     if (advanceTimer.current) window.clearTimeout(advanceTimer.current);
     advanceTimer.current = window.setTimeout(() => {
       const i = SCREENS.findIndex((s) => s.id === from);
@@ -376,85 +308,56 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     }, 260);
   };
 
-  const chooseType = (value: BetTypeValue) => {
-    update(value === data.betType ? { betType: value } : { betType: value, sportsKind: null, casinoGames: [], mainLossArea: null });
-    advanceFrom("type");
+  const choosePrevious = (value: "yes" | "no") => {
+    if (value === "yes") {
+      if (advanceTimer.current) window.clearTimeout(advanceTimer.current);
+      update({ previousRequest: "yes" });
+      return;
+    }
+    chooseAndAdvance({ previousRequest: "no" }, "previous");
   };
 
-  /** Leva à tela com a resposta pendente (ou ao envio do documento, sem rascunho). Devolve false se algo falta. */
+  /** Leva à tela com a resposta pendente (ou aos dados, sem rascunho com o CPF). Devolve null se algo falta. */
   function answersComplete(): DraftCreds | null {
-    const ctx = { fileCount: sentComprovaBet.length, busy, analysis: analysisCtx };
-    const invalid = firstInvalidScreen(data, ctx);
+    const invalid = firstInvalidScreen(data);
     if (invalid) {
       goTo(invalid);
       setAttempted(true);
-      setError(screenError(invalid, data, ctx));
+      setError(screenError(invalid, data));
       return null;
     }
     const creds = draftRef.current;
-    if (!creds) {
-      goTo("documents");
-      setError("Envie o seu ComprovaBet para continuar.");
+    if (!creds || !data.cpfMasked) {
+      goTo("contact");
+      setAttempted(true);
+      setCpfServerError("Confirme seu CPF para continuar.");
+      update({ cpfMasked: null });
       return null;
     }
     return creds;
   }
 
-  /** Erro devolvido pelo servidor: leva à tela do campo apontado (ou ao documento, se o rascunho expirou). */
+  /** Erro devolvido pelo servidor: leva à tela do campo apontado (ou aos dados, se o rascunho expirou). */
   function showServerError(status: number, body: { error?: string; field?: string }, fallback: string) {
     const message = body.error ?? fallback;
     if (status === 401 || status === 410) {
       invalidateDraft();
-      goTo("documents");
-    } else {
-      const field = body.field?.split(".")[0] ?? "";
-      const target = field ? FIELD_SCREEN[field] : undefined;
-      if (field === "cpf") update({ cpfMasked: null });
-      // Depois do pagamento aprovado, as respostas ficam fechadas: o aviso aparece na própria tela de pagamento.
-      if (target && target !== screen && !paid) {
-        goTo(target);
-        setAttempted(true);
-      } else if (field === "accept") {
-        setAttempted(true);
-      }
-    }
-    setError(message);
-  }
-
-  /** Pré-análise automática: o servidor lê o ComprovaBet e confere com as respostas do formulário. */
-  async function runAnalysis() {
-    const creds = draftRef.current;
-    if (!creds) {
-      goTo("documents");
-      setError("Envie o seu ComprovaBet para continuar.");
+      goTo("contact");
+      setAttempted(true);
+      setCpfServerError("Sua sessão expirou. Confirme seu CPF para continuar.");
       return;
     }
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setAnalysisSettled(false);
-    setAnalysisAnimate(true);
-    setAnalysisRunning(true);
-    try {
-      const res = await fetch("/api/draft/analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...draftHeaders(creds) },
-        body: JSON.stringify({ answers: buildPayload(data) }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { analysis?: PreAnalysis; error?: string; field?: string };
-      if (res.ok && body.analysis) {
-        setAnalysisResult(body.analysis);
-        return;
-      }
-      if (res.status === 401 || res.status === 410 || (res.status === 422 && body.field)) {
-        showServerError(res.status, body, "Não foi possível fazer a pré-análise agora. Tente novamente.");
-        return;
-      }
-      setAnalysisError(body.error ?? "Não foi possível fazer a pré-análise agora. Tente novamente.");
-    } catch {
-      setAnalysisError("Sem conexão. Verifique sua internet e tente novamente.");
-    } finally {
-      setAnalysisRunning(false);
+    const field = body.field?.split(".")[0] ?? "";
+    const target = field ? FIELD_SCREEN[field] : undefined;
+    if (field === "cpf") update({ cpfMasked: null });
+    // Depois do pagamento aprovado, as respostas ficam fechadas: o aviso aparece na própria tela.
+    if (target && target !== screen && !paid) {
+      goTo(target);
+      setAttempted(true);
+    } else if (field === "accept" || field === "preferences") {
+      setAttempted(true);
     }
+    setError(message);
   }
 
   /**
@@ -492,7 +395,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
       }
       showServerError(res.status, body, PIX_ERROR_MESSAGE);
     } catch {
-      setError("Sem conexão. Verifique sua internet e tente novamente.");
+      setError(OFFLINE);
     } finally {
       setPaying(false);
     }
@@ -511,22 +414,23 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
       });
       await refreshPayment({ quiet: true });
     } catch {
-      setError("Sem conexão. Verifique sua internet e tente novamente.");
+      setError(OFFLINE);
     } finally {
       setSimulating(false);
     }
   }
 
-  /** Solicita a análise (liberado só com o pagamento aprovado). */
-  async function submit() {
-    if (!paid) {
-      setError(screenError("payment", data, { fileCount: sentComprovaBet.length, busy, paid }));
+  /** Conclui: grava as preferências de contato na solicitação (registrada com a confirmação do pagamento). */
+  async function finish() {
+    const message = screenError("preferences", data);
+    if (message) {
+      setAttempted(true);
+      setError(message);
       return;
     }
     const creds = draftRef.current;
     if (!creds) {
-      goTo("documents");
-      setError("Envie o seu ComprovaBet para continuar.");
+      setError("Sua sessão expirou. Acesse o acompanhamento com o protocolo enviado para concluir.");
       return;
     }
     setSubmitting(true);
@@ -535,7 +439,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
       const res = await fetch("/api/cases", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...draftHeaders(creds) },
-        body: JSON.stringify(buildPayload(data)),
+        body: JSON.stringify({ answers: buildPayload(data), preferences: buildPreferences(data) }),
       });
       const body = (await res.json().catch(() => ({}))) as { protocol?: string; error?: string; field?: string };
       if (res.ok && body.protocol) {
@@ -545,15 +449,15 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
         return;
       }
       if (body.field === "payment") void refreshPayment();
-      showServerError(res.status, body, "Não foi possível enviar agora. Tente novamente.");
+      showServerError(res.status, body, "Não foi possível concluir agora. Tente novamente.");
     } catch {
-      setError("Sem conexão. Verifique sua internet e tente novamente.");
+      setError(OFFLINE);
     } finally {
       if (!finished.current) setSubmitting(false);
     }
   }
 
-  /** Registra o CPF no rascunho (o ComprovaBet é conferido com ele) e segue para o documento. */
+  /** Registra o CPF no rascunho (usado na cobrança e no registro da solicitação) e mostra o resultado. */
   async function saveCpfAndContinue(target: Screen) {
     setSavingCpf(true);
     setError(null);
@@ -580,7 +484,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
         return;
       }
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : "Sem conexão. Verifique sua internet e tente novamente.");
+      setError(err instanceof Error && err.message ? err.message : OFFLINE);
     } finally {
       setSavingCpf(false);
     }
@@ -588,27 +492,21 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
 
   function next() {
     if (savingCpf || paying || submitting) return;
-    if (filesLoading && screen === "documents") return;
+    if (screen === "previous" && data.previousRequest === "yes") {
+      router.push("/");
+      return;
+    }
     if (screen === "payment") {
-      if (paid) void submit();
+      if (paid) goTo("preferences");
       else if (pixOpen) void refreshPayment({ manual: true });
       else void generatePix();
       return;
     }
-    if (screen === "analysis") {
-      if (analysisRunning || (freshAnalysis && !analysisSettled)) return;
-      if (analysisError || !freshAnalysis) {
-        void runAnalysis();
-        return;
-      }
-      if (freshAnalysis.status === "blocked") {
-        goTo("documents");
-        return;
-      }
-      if (answersComplete()) goTo("payment");
+    if (screen === "preferences") {
+      void finish();
       return;
     }
-    const message = screenError(screen, data, { fileCount: sentComprovaBet.length, busy });
+    const message = screenError(screen, data, { paid });
     if (message) {
       setError(message);
       setAttempted(true);
@@ -622,16 +520,6 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     if (target) goTo(target.id);
   }
 
-  const cpfMissing = useCallback(
-    (message: string) => {
-      setData((current) => ({ ...current, cpfMasked: null }));
-      goTo("contact");
-      setAttempted(true);
-      setCpfServerError(message);
-    },
-    [goTo],
-  );
-
   function back() {
     if (paid) return;
     if (screen === "payment" && pixOpen) leftPixOpen.current = true;
@@ -642,7 +530,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
 
   async function restart() {
     if (paymentStarted) return;
-    if (!window.confirm("Recomeçar do início? As respostas e os arquivos enviados até agora serão apagados.")) return;
+    if (!window.confirm("Recomeçar do início? As respostas informadas até agora serão apagadas.")) return;
     const creds = draftRef.current;
     if (creds) {
       const res = await fetch("/api/draft", { method: "DELETE", headers: draftHeaders(creds) }).catch(() => null);
@@ -656,76 +544,27 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
     }
     clearProgress();
     setPayment(null);
-    setAnalysisResult(null);
     setData(EMPTY_DATA);
     setDraft(null);
-    setFiles([]);
-    setNotice(null);
     setSavedAt(null);
-    goTo("type");
+    goTo("previous");
   }
 
   function renderScreen() {
     const common = { data, update, headingRef };
     switch (screen) {
-      case "type":
-        return <TypeStep data={data} headingRef={headingRef} onChoose={chooseType} />;
-      case "typeDetail":
-        return <TypeDetailStep {...common} onSingleChoice={() => advanceFrom("typeDetail")} />;
+      case "previous":
+        return <PreviousStep data={data} headingRef={headingRef} onChoose={choosePrevious} />;
       case "platforms":
         return <PlatformsStep {...common} />;
       case "period":
-        return <PeriodStep {...common} year={year} />;
-      case "amounts":
-        return <AmountsStep {...common} year={year} />;
-      case "balance":
-        return <BalanceStep {...common} />;
-      case "control":
-        return <ControlStep {...common} />;
-      case "situation":
-        return <SituationStep {...common} />;
-      case "documents":
-        return (
-          <DocumentsStep
-            {...common}
-            year={year}
-            files={files}
-            setFiles={setFiles}
-            ensureDraft={ensureDraft}
-            getDraft={getDraft}
-            onDraftInvalid={invalidateDraft}
-            onCpfMissing={cpfMissing}
-            setBusy={setBusy}
-            maxUploadMb={settings.maxUploadMb}
-            notice={notice}
-            loadingFiles={filesLoading}
-          />
-        );
-      case "commitment":
-        return <CommitmentStep {...common} reviewDays={settings.reviewDays} />;
+        return <PeriodStep data={data} headingRef={headingRef} onChoose={(period) => chooseAndAdvance({ period }, "period")} />;
+      case "loss":
+        return <LossStep data={data} headingRef={headingRef} onChoose={(lossRange) => chooseAndAdvance({ lossRange }, "loss")} />;
       case "contact":
-        return <ContactStep {...common} showErrors={attempted} cpfLocked={sentComprovaBet.length > 0} serverError={cpfServerError} />;
-      case "review":
-        return (
-          <ReviewStep
-            data={data}
-            headingRef={headingRef}
-            platformNames={platformNames}
-            year={year}
-            goTo={goTo}
-          />
-        );
-      case "analysis":
-        return (
-          <AnalysisStep
-            headingRef={headingRef}
-            year={year}
-            result={freshAnalysis}
-            error={analysisError}
-            animate={analysisAnimate}
-            onSettled={onAnalysisSettled}
-          />
-        );
+        return <ContactStep {...common} showErrors={attempted} serverError={cpfServerError} />;
+      case "result":
+        return <ResultStep data={data} headingRef={headingRef} platformNames={platformNames} priceCents={settings.payment.priceCents} goTo={goTo} />;
       case "payment":
         return (
           <PaymentStep
@@ -733,36 +572,33 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
             settings={settings.payment}
             payment={payment}
             showErrors={attempted}
-            analysis={analysisCtx?.status ?? null}
-            reviewDays={settings.reviewDays}
             onSimulate={(outcome) => void simulateDemo(outcome)}
             simulating={simulating}
           />
         );
+      case "preferences":
+        return <PreferencesStep {...common} payment={payment} showErrors={attempted} />;
     }
   }
 
-  const analysisBusy = screen === "analysis" && (analysisRunning || Boolean(freshAnalysis && !analysisSettled));
   const primaryLabel =
-    screen === "analysis"
-      ? analysisBusy
-        ? "Analisando…"
-        : analysisError || !freshAnalysis
-          ? "Tentar novamente"
-          : freshAnalysis.status === "blocked"
-            ? "Enviar outro documento"
-            : "Ir para o pagamento"
-      : screen === "payment"
-        ? paid
-          ? "Solicitar análise"
-          : paying
-            ? "Gerando PIX…"
-            : pixOpen
-              ? "Verificar pagamento"
-              : payment && payment.status !== "none"
-                ? "Gerar novo PIX"
-                : "Gerar PIX"
-        : "Continuar";
+    screen === "previous" && data.previousRequest === "yes"
+      ? "Voltar para o início"
+      : screen === "result"
+        ? "Continuar para o pagamento"
+        : screen === "payment"
+          ? paid
+            ? "Continuar"
+            : paying
+              ? "Gerando PIX…"
+              : pixOpen
+                ? "Verificar pagamento"
+                : payment && payment.status !== "none"
+                  ? "Gerar novo PIX"
+                  : "Gerar PIX"
+          : screen === "preferences"
+            ? "Concluir"
+            : "Continuar";
 
   const stepLabel = meta.step ? `Etapa ${meta.step} de ${TOTAL_STEPS}` : meta.label;
 
@@ -807,7 +643,6 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
             <div className="h-9 w-3/4 animate-pulse rounded-lg bg-line" />
             <div className="h-20 animate-pulse rounded-2xl bg-line/70" />
             <div className="h-20 animate-pulse rounded-2xl bg-line/70" />
-            <div className="h-20 animate-pulse rounded-2xl bg-line/70" />
           </div>
         ) : (
           <>
@@ -835,8 +670,8 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
         <div className="mx-auto flex max-w-xl gap-3 px-5 py-3">
-          {!(onPaymentScreen && paid) && (
-            <Button variant="secondary" onClick={back} className="w-[7.5rem] shrink-0" disabled={!ready || submitting || savingCpf || paying || analysisRunning}>
+          {!paid && screen !== "preferences" && (
+            <Button variant="secondary" onClick={back} className="w-[7.5rem] shrink-0" disabled={!ready || submitting || savingCpf || paying}>
               Voltar
             </Button>
           )}
@@ -844,14 +679,7 @@ export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
             onClick={next}
             className="flex-1"
             disabled={!ready || (onPaymentScreen && !paid && !settings.payment.available)}
-            loading={
-              submitting ||
-              savingCpf ||
-              paying ||
-              analysisBusy ||
-              (filesLoading && screen === "documents") ||
-              (onPaymentScreen && (!paymentLoaded || (pixOpen && paymentChecking)))
-            }
+            loading={submitting || savingCpf || paying || (onPaymentScreen && (!paymentLoaded || (pixOpen && paymentChecking)))}
           >
             {primaryLabel}
           </Button>

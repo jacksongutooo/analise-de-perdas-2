@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
 import { RevealCpf } from "@/components/admin/RevealCpf";
-import { IconAlert, IconCheck, IconChevronLeft, IconEye, IconRefresh } from "@/components/icons";
+import { IconAlert, IconCheck, IconChevronLeft, IconClock, IconEye, IconRefresh } from "@/components/icons";
 import { MoneyField } from "@/components/MoneyInput";
 import { SubmitButton } from "@/components/SubmitButton";
 import { Badge, Notice, Select, TextInput, Textarea, buttonClasses } from "@/components/ui";
@@ -12,6 +12,7 @@ import { logAccess } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/admin";
 import { demoScope } from "@/lib/cases/admin-queries";
 import { CPF_MISMATCH_MESSAGE, SERVICE_TERMS_VERSION } from "@/lib/comprovabet";
+import { contactState, deadlineDistance } from "@/lib/contact";
 import { maskCpf } from "@/lib/cpf";
 import { PRE_ANALYSIS_STATUS_LABEL, PRE_CHECK_LABEL, parsePreAnalysis } from "@/lib/documents/pre-analysis";
 import { cx } from "@/lib/cx";
@@ -24,8 +25,12 @@ import {
   BET_TYPE_SUMMARY,
   CASINO_GAMES,
   COMPROVABET_REASON_VALUES,
+  CONTACT_CHANNELS,
+  CONTACT_PERIODS,
   CONTROL_LOSS_SUMMARY,
   DOC_CATEGORIES,
+  EVIDENCE_OPTIONS,
+  LOSS_RANGES,
   MAIN_LOSS_AREAS,
   PERIODS,
   REQUEST_REASONS,
@@ -67,6 +72,7 @@ import {
   confirmPayment,
   correctCpf,
   deleteCase,
+  markContacted,
   markCpfMismatch,
   markDocumentInvalid,
   recalcIdentified,
@@ -79,6 +85,7 @@ import {
   saveValidated,
   setDocumentStatus,
   startAnalysis,
+  undoContacted,
   updateStatus,
 } from "./actions";
 
@@ -106,6 +113,8 @@ const OK_MESSAGES: Record<string, string> = {
   started: "Análise iniciada. O cliente vê “Análise em andamento”.",
   concluded: "Análise concluída.",
   cpf_corrected: "CPF corrigido e ComprovaBet reconferido.",
+  contacted: "Contato registrado. O cliente vê “Contato realizado” no acompanhamento.",
+  contact_undone: "Registro do contato desfeito. O prazo do contato voltou a valer.",
 };
 const ERROR_MESSAGES: Record<string, string> = {
   status: "Status inválido.",
@@ -128,6 +137,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   cpf_invalid: "CPF inválido. Nada foi alterado.",
   cpf_reason: "Informe o motivo da correção do CPF.",
   cpf_locked: "O CPF não pode mais ser alterado: a análise documental já avançou.",
+  contact: "Este caso não tem prazo de primeiro contato (solicitação anterior ao formulário sem documento).",
 };
 
 function Section({ id, title, children, aside }: { id: string; title: string; children: ReactNode; aside?: ReactNode }) {
@@ -317,6 +327,7 @@ export default async function CasePage({
       user: true,
       assignedAdmin: { select: { id: true, name: true } },
       paymentConfirmedBy: { select: { name: true } },
+      contactedBy: { select: { name: true } },
       agreements: { orderBy: { acceptedAt: "desc" }, take: 1 },
       payments: { orderBy: { createdAt: "desc" } },
       platforms: { include: { platform: true } },
@@ -347,10 +358,13 @@ export default async function CasePage({
   });
 
   const status = c.status as CaseStatusValue;
-  const declared = decimalToCents(c.declaredLoss) ?? 0;
+  // Formulário sem documento: só a faixa de perda (sem valor exato declarado).
+  const declared = decimalToCents(c.declaredLoss);
   const identified = decimalToCents(c.identifiedLoss);
   const validated = decimalToCents(c.validatedLoss);
-  const divergence = divergenceOf(declared, identified);
+  const divergence = declared === null ? null : divergenceOf(declared, identified);
+  const intake = Boolean(c.contactDeadline);
+  const contact = contactState(c.contactDeadline, c.contactedAt);
   const declaration = c.declarations[0];
   const openRequest = c.requests.find((r) => r.status === "open");
   const requestDoc = sp.solicitar ? c.documents.find((d) => d.id === sp.solicitar) : undefined;
@@ -361,7 +375,9 @@ export default async function CasePage({
       ? labelFor(SPORTS_KINDS, c.sportsBetKind)
       : c.betType === "casino"
         ? c.casinoGames.map((g) => labelFor(CASINO_GAMES, g)).join(", ")
-        : labelFor(MAIN_LOSS_AREAS, c.mainLossArea);
+        : c.betType === "both"
+          ? labelFor(MAIN_LOSS_AREAS, c.mainLossArea)
+          : "";
 
   const payment = c.paymentStatus as PaymentStatusValue;
   const legacy = payment === "not_applicable";
@@ -379,7 +395,9 @@ export default async function CasePage({
   const agreement = c.agreements[0] ?? null;
   const approvedPayment = c.payments.find((p) => p.status === "paid") ?? null;
   const preAnalysis = parsePreAnalysis(c.preAnalysis);
-  const canStart = status === "payment_confirmed" || (legacy && (status === "submitted" || status === "documents_received"));
+  const canStart =
+    status === "payment_confirmed" ||
+    ((legacy || (intake && payment === "confirmed")) && (status === "submitted" || status === "documents_received"));
   const latestNote = c.notes[0] ?? null;
 
   return (
@@ -421,6 +439,104 @@ export default async function CasePage({
 
       {sp.ok && OK_MESSAGES[sp.ok] && <Notice tone="ok">{OK_MESSAGES[sp.ok]}</Notice>}
       {sp.erro && ERROR_MESSAGES[sp.erro] && <Notice tone="danger">{ERROR_MESSAGES[sp.erro]}</Notice>}
+
+      {/* ── Primeiro contato (formulário sem documento) ─────────── */}
+      {intake && c.contactDeadline && (
+        <section
+          id="contato"
+          className={cx(
+            "scroll-mt-24 rounded-2xl border p-5 shadow-soft",
+            contact === "overdue" ? "border-danger-700/30 bg-danger-50" : contact === "pending" ? "border-warn-700/30 bg-warn-50" : "border-line bg-surface",
+          )}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
+                <IconClock size={18} className="shrink-0" /> Contato com o cliente
+              </h2>
+              <p className="mt-1 text-sm text-ink-soft">
+                {contact === "done" ? (
+                  <>
+                    Contato feito em {formatDateTime(c.contactedAt)}
+                    {c.contactedBy ? ` por ${c.contactedBy.name}` : ""}.
+                  </>
+                ) : (
+                  <>
+                    Prazo: <strong className="font-semibold text-ink">{formatDateTime(c.contactDeadline)}</strong> (1 dia útil depois do pagamento) ·{" "}
+                    <span className={cx("font-semibold", contact === "overdue" ? "text-danger-700" : "text-warn-700")}>
+                      {deadlineDistance(c.contactDeadline)}
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+            <Badge tone={contact === "done" ? "ok" : contact === "overdue" ? "danger" : "warn"}>
+              {contact === "done" ? "Contato feito" : contact === "overdue" ? "Contato atrasado" : "Contato pendente"}
+            </Badge>
+          </div>
+          <dl className="mt-3 grid gap-x-6 sm:grid-cols-2 xl:grid-cols-4">
+            <Info label="Comprovação preferida">
+              {c.evidencePreference ? labelFor(EVIDENCE_OPTIONS, c.evidencePreference) : <span className="text-muted">Não informada</span>}
+            </Info>
+            <Info label="Canal">
+              {c.contactChannel ? (
+                <>
+                  {labelFor(CONTACT_CHANNELS, c.contactChannel)}
+                  <span className="block text-xs">
+                    {c.contactChannel === "email" ? (
+                      <a href={`mailto:${c.user.email}`} className="break-all text-navy-700 hover:underline">
+                        {c.user.email}
+                      </a>
+                    ) : c.contactChannel === "phone" ? (
+                      <a href={`tel:+55${c.user.whatsapp}`} className="text-navy-700 hover:underline">
+                        {formatPhoneBR(c.user.whatsapp)}
+                      </a>
+                    ) : (
+                      <a href={`https://wa.me/55${c.user.whatsapp}`} target="_blank" rel="noopener noreferrer" className="text-navy-700 hover:underline">
+                        {formatPhoneBR(c.user.whatsapp)}
+                      </a>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <span className="text-muted">Não informado · use o WhatsApp</span>
+              )}
+            </Info>
+            <Info label="Melhor horário">
+              {c.contactPeriod ? labelFor(CONTACT_PERIODS, c.contactPeriod) : <span className="text-muted">Não informado</span>}
+            </Info>
+            <Info label="Preferências informadas em">
+              {c.preferencesAt ? formatDateTime(c.preferencesAt) : <span className="text-muted">O cliente ainda não informou</span>}
+            </Info>
+          </dl>
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-line/70 pt-4">
+            {contact === "done" ? (
+              <form action={bind(undoContacted)}>
+                <SubmitButton size="sm" variant="ghost" confirmMessage="Desfazer o registro do contato? O prazo volta a valer.">
+                  Desfazer registro do contato
+                </SubmitButton>
+              </form>
+            ) : (
+              <ConfirmDialog
+                label="Marcar contato como feito"
+                variant="primary"
+                title="Registrar o contato com o cliente?"
+                confirmLabel="Registrar contato"
+                action={markContacted.bind(null, c.id)}
+                description={<p>O cliente verá “Contato realizado” no acompanhamento. Para pedir a comprovação, use depois “Solicitar documentos”.</p>}
+              >
+                <label className="block text-sm font-medium text-ink">
+                  Resumo do contato (opcional, vira nota interna)
+                  <Textarea name="note" maxLength={1000} placeholder="Ex.: combinado o envio do extrato bancário até sexta." className="mt-1.5 min-h-20 text-sm" />
+                </label>
+              </ConfirmDialog>
+            )}
+            <a href="#solicitar" className={buttonClasses("secondary", "sm")}>
+              Solicitar documentos
+            </a>
+          </div>
+        </section>
+      )}
 
       {/* ── Resumo e ações rápidas ─────────────────────────────── */}
       <Section id="resumo" title="Resumo do caso">
@@ -587,7 +703,11 @@ export default async function CasePage({
               label="Iniciar análise"
               variant="primary"
               disabled={!canStart}
-              disabledReason="Disponível depois da validação documental e do pagamento confirmado."
+              disabledReason={
+                intake
+                  ? "Disponível com o pagamento confirmado, antes de a análise começar."
+                  : "Disponível depois da validação documental e do pagamento confirmado."
+              }
               title="Iniciar a análise do caso?"
               confirmLabel="Iniciar análise"
               action={startAnalysis.bind(null, c.id)}
@@ -620,11 +740,19 @@ export default async function CasePage({
       {/* ── Valores ─────────────────────────────────────────────── */}
       <Section id="valores" title="Valores">
         <div className="grid gap-3 md:grid-cols-3">
-          <ValueCard
-            label="Valor declarado"
-            value={formatBRL(declared)}
-            note={c.declaredNeedsReview ? <span className="font-medium text-warn-700">Cálculo negativo, necessita revisão</span> : "Informado pelo cliente"}
-          />
+          {declared === null ? (
+            <ValueCard
+              label="Perdas informadas"
+              value={c.lossRange ? labelFor(LOSS_RANGES, c.lossRange) : <span className="text-muted">—</span>}
+              note="Faixa informada pelo cliente (sem valor exato)"
+            />
+          ) : (
+            <ValueCard
+              label="Valor declarado"
+              value={formatBRL(declared)}
+              note={c.declaredNeedsReview ? <span className="font-medium text-warn-700">Cálculo negativo, necessita revisão</span> : "Informado pelo cliente"}
+            />
+          )}
           <ValueCard
             label="Valor identificado"
             value={identified === null ? <span className="text-muted">—</span> : formatBRL(identified)}
@@ -646,7 +774,7 @@ export default async function CasePage({
           />
         </div>
 
-        {divergence && (
+        {divergence && declared !== null && (
           <div className="mt-4 rounded-xl border border-warn-700/25 bg-warn-50 p-4">
             <p className="flex items-center gap-2 font-semibold text-warn-700">
               <IconAlert size={18} /> Divergência encontrada
@@ -675,6 +803,15 @@ export default async function CasePage({
         <div className="mt-5 grid gap-5 lg:grid-cols-3">
           <div className="rounded-xl border border-line p-4">
             <p className="text-sm font-semibold text-ink">Declarado pelo cliente</p>
+            {declared === null ? (
+              <dl className="mt-2 divide-y divide-dashed divide-line-strong text-sm">
+                <div className="flex justify-between gap-3 py-1.5">
+                  <dt className="text-muted">Faixa de perda</dt>
+                  <dd className="text-right">{c.lossRange ? labelFor(LOSS_RANGES, c.lossRange) : "—"}</dd>
+                </div>
+                <div className="py-1.5 text-xs text-muted">O formulário sem documento pede só a faixa. Os valores exatos vêm da comprovação.</div>
+              </dl>
+            ) : (
             <dl className="mt-2 divide-y divide-dashed divide-line-strong text-sm">
               <div className="flex justify-between py-1.5">
                 <dt className="text-muted">Depósitos</dt>
@@ -695,6 +832,7 @@ export default async function CasePage({
                 </div>
               )}
             </dl>
+            )}
           </div>
 
           <div className="space-y-3 rounded-xl border border-line p-4">
@@ -808,19 +946,34 @@ export default async function CasePage({
           </div>
         </Section>
 
-        <Section id="classificacao" title="Classificação">
+        <Section id="classificacao" title={intake ? "Respostas do formulário" : "Classificação"}>
           <dl className="grid gap-x-6 sm:grid-cols-2">
-            <Info label="Tipo">{BET_TYPE_SUMMARY[c.betType]}</Info>
-            <Info label="Detalhe">{detail || "—"}</Info>
+            {c.firstRequestDeclared !== null && (
+              <Info label="Primeira solicitação do CPF">
+                {c.firstRequestDeclared ? "Declarou que nunca pediu o estorno" : "Não declarada"}
+              </Info>
+            )}
+            {c.lossRange && <Info label="Faixa de perda informada">{labelFor(LOSS_RANGES, c.lossRange)}</Info>}
             <Info label="Tempo de uso">{labelFor(PERIODS, c.period)}</Info>
             <Info label="Plataformas">{c.platforms.map((p) => p.platform.name + (p.platform.isCustom ? " (informada)" : "")).join(", ")}</Info>
-            <Info label="Controle das apostas">
-              {c.controlLoss ? CONTROL_LOSS_SUMMARY[c.controlLoss] : <span className="text-muted">Não perguntado (solicitação anterior)</span>}
-            </Info>
-            <Info label="O que aconteceu">
-              {c.situations.map((s) => labelFor(SITUATIONS, s)).join("; ") || "—"}
-              {c.situationOther && <span className="block text-ink-soft">“{c.situationOther}”</span>}
-            </Info>
+            {c.betType ? (
+              <>
+                <Info label="Tipo">{BET_TYPE_SUMMARY[c.betType]}</Info>
+                <Info label="Detalhe">{detail || "—"}</Info>
+              </>
+            ) : null}
+            {!intake && (
+              <>
+                <Info label="Controle das apostas">
+                  {c.controlLoss ? CONTROL_LOSS_SUMMARY[c.controlLoss] : <span className="text-muted">Não perguntado (solicitação anterior)</span>}
+                </Info>
+                <Info label="O que aconteceu">
+                  {c.situations.map((s) => labelFor(SITUATIONS, s)).join("; ") || "—"}
+                  {c.situationOther && <span className="block text-ink-soft">“{c.situationOther}”</span>}
+                </Info>
+              </>
+            )}
+            {!intake && (
             <Info label="Compromisso voluntário">
               {c.commitment?.accepted ? (
                 <>
@@ -834,6 +987,7 @@ export default async function CasePage({
                 "Não registrado"
               )}
             </Info>
+            )}
           </dl>
         </Section>
       </div>

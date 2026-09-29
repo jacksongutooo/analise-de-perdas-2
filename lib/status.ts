@@ -249,6 +249,9 @@ export function clientTimeline(input: {
   hasComprovaBet: boolean;
   documentApprovedAt: Date | null;
   paymentConfirmedAt: Date | null;
+  /** Formulário sem documento: prazo e data do primeiro contato da equipe. */
+  contactDeadline?: Date | null;
+  contactedAt?: Date | null;
 }): TimelineStep[] {
   const { status, paymentStatus, history } = input;
   const at = (statuses: readonly string[], last = false): Date | null => {
@@ -259,6 +262,7 @@ export function clientTimeline(input: {
     return (last ? dates[dates.length - 1] : dates[0]) ?? null;
   };
   const finished = FINISHED_STATUSES.includes(status);
+  if (input.contactDeadline) return intakeTimeline(input, at, finished);
   const legacy = paymentStatus === "not_applicable";
   const paid = paymentStatus === "confirmed";
   const payFirst = paid && paidBeforeRequest(input.paymentConfirmedAt, input.createdAt);
@@ -320,6 +324,62 @@ export function clientTimeline(input: {
     },
   );
   return steps;
+}
+
+/**
+ * Etapas do formulário sem documento: 1. Solicitação registrada · 2. Pagamento confirmado · 3. Contato da equipe
+ * (em até 1 dia útil) · 4. Comprovação das perdas · 5. Análise em andamento · 6. Análise concluída.
+ */
+function intakeTimeline(
+  input: Parameters<typeof clientTimeline>[0],
+  at: (statuses: readonly string[], last?: boolean) => Date | null,
+  finished: boolean,
+): TimelineStep[] {
+  const { status } = input;
+  const paid = input.paymentStatus === "confirmed";
+  const contacted = Boolean(input.contactedAt);
+  const analysisReached = finished || status === "under_review" || at(["under_review"]) !== null;
+  // Complemento pedido durante a análise (e não na comprovação inicial).
+  const complementInAnalysis = status === "additional_documents" && analysisReached;
+  const proven = input.documentApprovedAt !== null || finished || status === "payment_confirmed" || status === "under_review" || complementInAnalysis;
+  const proofStarted = contacted || status !== "submitted";
+  return [
+    { key: "registered", label: "Solicitação registrada", state: "done", date: input.createdAt },
+    {
+      key: "payment",
+      label: "Pagamento confirmado",
+      state: paid ? "done" : "current",
+      date: paid ? input.paymentConfirmedAt : null,
+    },
+    {
+      key: "contact",
+      label: "Contato da equipe",
+      // A equipe pode seguir direto para os documentos ou a análise: o contato fica como feito.
+      state: contacted || status !== "submitted" ? "done" : "current",
+      date: input.contactedAt ?? null,
+      note: contacted || status !== "submitted" ? undefined : "Em até 1 dia útil",
+    },
+    {
+      key: "proof",
+      label: "Comprovação das perdas",
+      state: proven ? "done" : status === "additional_documents" ? "attention" : proofStarted ? "current" : "pending",
+      date: proven ? (input.documentApprovedAt ?? at(["payment_confirmed", "under_review"])) : null,
+      note: !proven && status === "additional_documents" ? "Envie os documentos pedidos pela equipe" : !proven && status === "documents_received" ? "Documentos em conferência" : undefined,
+    },
+    {
+      key: "analysis",
+      label: "Análise em andamento",
+      state: finished ? "done" : status === "under_review" ? "current" : complementInAnalysis ? "attention" : "pending",
+      date: finished || status === "under_review" || complementInAnalysis ? at(["under_review"]) : null,
+      note: complementInAnalysis ? "Documentação complementar necessária" : undefined,
+    },
+    {
+      key: "result",
+      label: "Análise concluída",
+      state: finished ? "done" : "pending",
+      date: finished ? at(FINISHED_STATUSES, true) : null,
+    },
+  ];
 }
 
 /** Divergência relevante entre valor declarado e identificado (≥ R$ 100 e ≥ 2% do declarado). */

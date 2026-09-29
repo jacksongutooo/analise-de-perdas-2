@@ -10,8 +10,12 @@ import { paymentMethodLabel, providerLabel } from "@/lib/payments";
 import {
   BET_TYPE_SUMMARY,
   CASINO_GAMES,
+  CONTACT_CHANNELS,
+  CONTACT_PERIODS,
   CONTROL_LOSS_SUMMARY,
   DOC_CATEGORIES,
+  EVIDENCE_OPTIONS,
+  LOSS_RANGES,
   MAIN_LOSS_AREAS,
   PERIODS,
   REQUEST_REASONS,
@@ -69,7 +73,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       ? labelFor(SPORTS_KINDS, c.sportsBetKind)
       : c.betType === "casino"
         ? c.casinoGames.map((g) => labelFor(CASINO_GAMES, g))
-        : labelFor(MAIN_LOSS_AREAS, c.mainLossArea);
+        : c.betType === "both"
+          ? labelFor(MAIN_LOSS_AREAS, c.mainLossArea)
+          : null;
 
   const data = {
     geradoEm: new Date().toISOString(),
@@ -100,7 +106,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           pagaEm: p.paidAt?.toISOString() ?? null,
         })),
       },
-      tipo: BET_TYPE_SUMMARY[c.betType],
+      primeiraSolicitacaoDeclarada: c.firstRequestDeclared,
+      faixaDePerdaInformada: c.lossRange ? labelFor(LOSS_RANGES, c.lossRange) : null,
+      preferenciasDeContato: c.preferencesAt
+        ? {
+            comprovacao: labelFor(EVIDENCE_OPTIONS, c.evidencePreference),
+            canal: labelFor(CONTACT_CHANNELS, c.contactChannel),
+            horario: labelFor(CONTACT_PERIODS, c.contactPeriod),
+            informadasEm: c.preferencesAt.toISOString(),
+          }
+        : null,
+      primeiroContato: c.contactDeadline
+        ? { prazo: c.contactDeadline.toISOString(), realizadoEm: c.contactedAt?.toISOString() ?? null }
+        : null,
+      tipo: c.betType ? BET_TYPE_SUMMARY[c.betType] : null,
       detalhe: detail,
       plataformas: c.platforms.map((p) => p.platform.name),
       tempoDeUso: labelFor(PERIODS, c.period),

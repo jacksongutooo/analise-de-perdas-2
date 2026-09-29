@@ -1,12 +1,14 @@
 // Casos FICTÍCIOS de demonstração, usados pelo seed (npm run db:seed) e pela prévia navegável.
-// Os casos seguem o fluxo atual: pré-análise automática do ComprovaBet, pagamento antes da solicitação e
-// prazo em dias úteis. Cobrem aprovação automática, conferência pela equipe (CPF mascarado ou PDF digitalizado),
+// Formulário sem documento (DEMO_INTAKE_CASES): faixa de perda, pagamento e primeiro contato da equipe em até
+// 1 dia útil — contato no prazo, atrasado, feito e com documentos pedidos.
+// Formulário anterior (DEMO_CASES): ComprovaBet no envio, pré-análise automática e pagamento antes da
+// solicitação. Cobrem aprovação automática, conferência pela equipe (CPF mascarado ou PDF digitalizado),
 // CPF divergente, complemento, análise e conclusão — além de um caso anterior ao ComprovaBet (sem CPF e sem
 // pagamento), para conferir a compatibilidade.
 // Todos os registros são marcados com is_demo = true e nunca se misturam com dados reais.
 import { randomUUID } from "node:crypto";
 import type { CaseStatus, DocumentStatus, Prisma } from "@prisma/client";
-import { addBusinessDays } from "@/lib/business-days";
+import { addBusinessDays, contactDeadlineFrom } from "@/lib/business-days";
 import { CPF_MISMATCH_MESSAGE, PAYMENT_NOTICE, SERVICE_TERMS_CHECKBOX, SERVICE_TERMS_VERSION } from "@/lib/comprovabet";
 import { formatCpf } from "@/lib/cpf";
 import { prisma } from "@/lib/db";
@@ -363,6 +365,89 @@ export const DEMO_CASES: DemoCase[] = [
     legacyDocs: [{ platform: "Betano", deposits: R(9300), withdrawals: R(2000), balance: 0, name: "betano-historico-financeiro.csv" }],
     events: [],
     legacyFlow: ["under_review"],
+  },
+];
+
+/** Formulário sem documento: respostas, preferências e o primeiro contato da equipe. */
+type IntakeDemoCase = {
+  protocol: string;
+  name: string;
+  cpfBase: string;
+  email: string;
+  whatsapp: string;
+  /** Horas desde o pagamento (a solicitação é registrada logo depois). */
+  hoursAgo: number;
+  period: "up_to_3m" | "from_3_to_6m" | "from_6_to_12m" | "over_12m";
+  lossRange: "up_to_1k" | "from_1k_to_5k" | "from_5k_to_20k" | "from_20k_to_50k" | "over_50k";
+  platforms: { slug: string; name: string; custom?: boolean }[];
+  /** Preferências informadas depois do pagamento (null: fechou a página antes). */
+  preferences: { evidence: "bank_statement" | "comprovabet" | "team_guidance"; channel: "whatsapp" | "phone" | "email"; contactPeriod: "morning" | "afternoon" | "evening" } | null;
+  /** Primeiro contato da equipe, horas depois do pagamento. */
+  contacted?: { hoursAfter: number; note: string };
+  /** Documentos pedidos pela equipe depois do contato. */
+  requested?: { reasons: string[]; message: string };
+};
+
+export const DEMO_INTAKE_CASES: IntakeDemoCase[] = [
+  {
+    protocol: "DEMO-200001",
+    name: "Rafa Exemplo Teles",
+    cpfBase: "000000021",
+    email: "rafa.exemplo@example.com",
+    whatsapp: "11900000021",
+    hoursAgo: 1,
+    period: "over_12m",
+    lossRange: "from_5k_to_20k",
+    platforms: [
+      { slug: "betano", name: "Betano" },
+      { slug: "bet365", name: "Bet365" },
+    ],
+    preferences: { evidence: "bank_statement", channel: "whatsapp", contactPeriod: "evening" },
+  },
+  {
+    protocol: "DEMO-200002",
+    name: "Sofia Modelo Brandão",
+    cpfBase: "000000022",
+    email: "sofia.modelo@example.com",
+    whatsapp: "21900000022",
+    hoursAgo: 6 * 24,
+    period: "from_6_to_12m",
+    lossRange: "from_1k_to_5k",
+    platforms: [{ slug: "superbet", name: "Superbet" }],
+    preferences: null,
+  },
+  {
+    protocol: "DEMO-200003",
+    name: "Téo Fictício Assis",
+    cpfBase: "000000023",
+    email: "teo.ficticio@example.com",
+    whatsapp: "31900000023",
+    hoursAgo: 4 * 24,
+    period: "over_12m",
+    lossRange: "from_20k_to_50k",
+    platforms: [
+      { slug: "kto", name: "KTO" },
+      { slug: "betnacional", name: "Betnacional" },
+    ],
+    preferences: { evidence: "comprovabet", channel: "phone", contactPeriod: "morning" },
+    contacted: { hoursAfter: 20, note: "Cliente tem acesso ao ComprovaBet. Combinado o envio pelo acompanhamento." },
+    requested: {
+      reasons: ["comprovabet_needed", "bank_statement_needed"],
+      message: `Conforme combinado por telefone, envie o ComprovaBet ${YEAR} e o extrato bancário com os PIX para a KTO e a Betnacional.`,
+    },
+  },
+  {
+    protocol: "DEMO-200004",
+    name: "Vera Teste Campos",
+    cpfBase: "000000024",
+    email: "vera.teste@example.com",
+    whatsapp: "41900000024",
+    hoursAgo: 30,
+    period: "from_3_to_6m",
+    lossRange: "up_to_1k",
+    platforms: [{ slug: "plataforma-exemplo", name: "Plataforma Exemplo", custom: true }],
+    preferences: { evidence: "team_guidance", channel: "email", contactPeriod: "afternoon" },
+    contacted: { hoursAfter: 3, note: "Orientado a baixar o extrato do banco. Cliente vai enviar nesta semana." },
   },
 ];
 
@@ -744,6 +829,102 @@ export async function seedDemoData(): Promise<SeededCase[]> {
     if (demo.note) await prisma.caseNote.create({ data: { caseId: c.id, adminId: lead.id, content: demo.note } });
     const final = await prisma.case.findUniqueOrThrow({ where: { id: c.id }, select: { status: true, paymentStatus: true } });
     created.push({ protocol: demo.protocol, status: final.status, paymentStatus: final.paymentStatus, email: demo.email });
+  }
+
+  // Formulário sem documento: pago, com o prazo do primeiro contato (1 dia útil) e, quando houve, o contato.
+  for (const [index, demo] of DEMO_INTAKE_CASES.entries()) {
+    const paidAt = new Date(now - demo.hoursAgo * HOUR);
+    const createdAt = new Date(paidAt.getTime() + 20_000);
+    const termsAt = new Date(paidAt.getTime() - 3 * 60_000);
+    const reviewerId = index % 2 ? analyst.id : lead.id;
+    const seq = String(100 + index).padStart(4, "0");
+    const providerTransactionId = `DEMO-PIX-${seq}`;
+    const user = await prisma.user.create({
+      data: { fullName: demo.name, cpf: demoCpf(demo.cpfBase), email: demo.email, whatsapp: demo.whatsapp, isAdult: true, isDemo: true, createdAt },
+    });
+    const platformIds: string[] = [];
+    for (const p of demo.platforms) {
+      const row = await prisma.bettingPlatform.upsert({
+        where: { slug: p.slug },
+        update: {},
+        create: { slug: p.slug, name: p.name, isCustom: Boolean(p.custom) },
+      });
+      platformIds.push(row.id);
+    }
+    const contactedAt = demo.contacted ? new Date(paidAt.getTime() + demo.contacted.hoursAfter * HOUR) : null;
+    const c = await prisma.case.create({
+      data: {
+        protocol: demo.protocol,
+        userId: user.id,
+        period: demo.period,
+        lossRange: demo.lossRange,
+        firstRequestDeclared: true,
+        status: "submitted",
+        paymentStatus: "confirmed",
+        paymentConfirmedAt: paidAt,
+        paymentReference: ["Pagamento de demonstração", paymentMethodLabel("pix"), providerTransactionId].join(" · "),
+        contactDeadline: contactDeadlineFrom(paidAt),
+        ...(demo.preferences
+          ? {
+              evidencePreference: demo.preferences.evidence,
+              contactChannel: demo.preferences.channel,
+              contactPeriod: demo.preferences.contactPeriod,
+              preferencesAt: new Date(createdAt.getTime() + 60_000),
+            }
+          : {}),
+        ...(contactedAt ? { contactedAt, contactedById: reviewerId } : {}),
+        assignedAdminId: contactedAt ? reviewerId : null,
+        privacyConsentAt: createdAt,
+        privacyConsentIp: "203.0.113.10",
+        isDemo: true,
+        createdAt,
+        reviewDeadline: addBusinessDays(createdAt, config.reviewDays),
+        platforms: { create: platformIds.map((platformId) => ({ platformId })) },
+        agreements: {
+          create: {
+            accepted: true,
+            acceptedAt: termsAt,
+            termsVersion: SERVICE_TERMS_VERSION,
+            text: `Importante: ${PAYMENT_NOTICE}\n\n${SERVICE_TERMS_CHECKBOX}`,
+            ip: "203.0.113.10",
+            userAgent: "Mozilla/5.0 (demonstração)",
+            createdAt: termsAt,
+          },
+        },
+        payments: {
+          create: {
+            provider: "demo",
+            status: "paid",
+            statusDetail: "confirmado na demonstração",
+            amount: centsToDecimal(config.analysisPriceCents ?? DEMO_PRICE_CENTS),
+            paymentMethod: "pix",
+            externalReference: `AP-DEMO-${seq}`,
+            providerTransactionId,
+            providerStatus: "PAID",
+            pixExpiresAt: new Date(paidAt.getTime() + 86_340_000),
+            paidAt,
+            isDemo: true,
+            createdAt: new Date(paidAt.getTime() - 60_000),
+          },
+        },
+        statusHistory: { create: [{ toStatus: "submitted", createdAt }] },
+      },
+    });
+    if (demo.contacted && contactedAt) {
+      await prisma.caseReview.create({ data: { caseId: c.id, adminId: reviewerId, action: "contact:done", comment: demo.contacted.note, createdAt: contactedAt } });
+      await prisma.caseNote.create({ data: { caseId: c.id, adminId: reviewerId, content: `Contato com o cliente: ${demo.contacted.note}`, createdAt: contactedAt } });
+    }
+    let status: CaseStatus = "submitted";
+    if (demo.requested && contactedAt) {
+      const at = new Date(contactedAt.getTime() + 10 * 60_000);
+      await prisma.documentRequest.create({
+        data: { caseId: c.id, reasons: demo.requested.reasons, message: demo.requested.message, requestedById: reviewerId, createdAt: at },
+      });
+      await prisma.statusHistory.create({ data: { caseId: c.id, fromStatus: "submitted", toStatus: "additional_documents", changedById: reviewerId, createdAt: at } });
+      await prisma.case.update({ where: { id: c.id }, data: { status: "additional_documents" } });
+      status = "additional_documents";
+    }
+    created.push({ protocol: demo.protocol, status, paymentStatus: "confirmed", email: demo.email });
   }
 
   return created;

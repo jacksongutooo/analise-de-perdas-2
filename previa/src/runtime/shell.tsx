@@ -8,7 +8,6 @@ import { simplePdf } from "@/lib/demo/simple-pdf";
 import { config } from "@/lib/env";
 import { formatCpf } from "@/lib/cpf";
 import { decimalToCents, formatAmount } from "@/lib/format";
-import { PLATFORMS } from "@/lib/options";
 import { prisma } from "@/lib/db";
 import { CASE_STATUS_LABEL, type CaseStatusValue } from "@/lib/status";
 import { clearStoredFiles } from "../shims/storage-local";
@@ -33,6 +32,7 @@ function PreviewBar() {
     await clearStoredFiles();
     try {
       window.localStorage.removeItem("analise:v1");
+      window.localStorage.removeItem("analise:v2");
     } catch {
       /* ignore */
     }
@@ -81,12 +81,12 @@ function Tip({ children, onClose }: { children: ReactNode; onClose: () => void }
 }
 
 const TRACKING_SHORTCUTS: { protocol: string; hint: string }[] = [
-  { protocol: "DEMO-100001", hint: "Validação documental" },
-  { protocol: "DEMO-100008", hint: "CPF divergente" },
-  { protocol: "DEMO-100003", hint: "Complemento solicitado" },
-  { protocol: "DEMO-100002", hint: "Documento aprovado · pagamento" },
-  { protocol: "DEMO-100004", hint: "Análise em andamento" },
-  { protocol: "DEMO-100006", hint: "Análise concluída" },
+  { protocol: "DEMO-200001", hint: "Aguardando o contato da equipe" },
+  { protocol: "DEMO-200002", hint: "Pagou e ainda não disse como prefere o contato" },
+  { protocol: "DEMO-200004", hint: "Contato realizado" },
+  { protocol: "DEMO-200003", hint: "Documentos pedidos depois do contato" },
+  { protocol: "DEMO-100004", hint: "Análise em andamento (formulário anterior)" },
+  { protocol: "DEMO-100006", hint: "Análise concluída (formulário anterior)" },
 ];
 
 type CaseShortcut = { id: string; protocol: string; email: string; hint: string };
@@ -123,12 +123,12 @@ function TrackingTip() {
         select: { id: true, protocol: true, status: true, user: { select: { email: true } } },
       })) as { id: string; protocol: string; status: CaseStatusValue; user: { email: string } }[];
       const known = new Set(TRACKING_SHORTCUTS.map((s) => s.protocol));
-      const mine = rows.filter((r) => !/^DEMO-1000\d\d$/.test(r.protocol) && !known.has(r.protocol)).slice(0, 1);
+      const mine = rows.filter((r) => !/^DEMO-[12]000\d\d$/.test(r.protocol) && !known.has(r.protocol)).slice(0, 1);
       setCases([
         ...mine.map((r) => ({ id: r.id, protocol: r.protocol, email: r.user.email, hint: `Seu caso · ${CASE_STATUS_LABEL[r.status]}` })),
         ...TRACKING_SHORTCUTS.flatMap((s) => {
           const r = rows.find((row) => row.protocol === s.protocol);
-          return r ? [{ id: r.id, protocol: r.protocol, email: r.user.email, hint: CASE_STATUS_LABEL[r.status] ?? s.hint }] : [];
+          return r ? [{ id: r.id, protocol: r.protocol, email: r.user.email, hint: s.hint }] : [];
         }),
       ]);
     })();
@@ -231,59 +231,38 @@ async function examplePhoto(): Promise<File> {
   return new File([blob], `foto-comprovabet-${YEAR}.jpg`, { type: "image/jpeg" });
 }
 
-/** CPF, nome, plataformas e valores que a prévia usa nos exemplos: do formulário em andamento ou do caso acompanhado. */
-async function exampleOwner(pathname: string): Promise<ExampleOwner | null> {
-  if (pathname === "/acompanhar/documentos") {
-    const raw = cookieStore.get(TRACKING_COOKIE)?.value;
-    const caseId = raw?.split(".")[0];
-    if (!caseId) return null;
-    const c = (await prisma.case.findUnique({
-      where: { id: caseId },
-      select: {
-        declaredDeposits: true,
-        declaredWithdrawals: true,
-        user: { select: { cpf: true, fullName: true } },
-        platforms: { select: { platform: { select: { name: true } } } },
-      },
-    })) as {
-      declaredDeposits: string;
-      declaredWithdrawals: string;
-      user: { cpf: string | null; fullName: string };
-      platforms: { platform: { name: string } }[];
-    } | null;
-    if (!c?.user.cpf) return null;
-    return {
-      cpf: c.user.cpf,
-      name: c.user.fullName,
-      platforms: c.platforms.map((p) => p.platform.name),
-      depositsCents: decimalToCents(c.declaredDeposits),
-      withdrawalsCents: decimalToCents(c.declaredWithdrawals),
-    };
-  }
-  try {
-    const saved = JSON.parse(window.localStorage.getItem("analise:v1") ?? "null");
-    const draftId = saved?.draft?.id as string | undefined;
-    if (!draftId) return null;
-    const draft = (await prisma.caseDraft.findUnique({ where: { id: draftId }, select: { cpf: true } })) as { cpf: string | null } | null;
-    if (!draft?.cpf) return null;
-    const data = saved?.data ?? {};
-    const platforms = PLATFORMS.filter((p) => (data.platforms ?? []).includes(p.slug)).map((p) => p.name);
-    if (data.otherPlatformEnabled) platforms.push(...(data.customPlatforms ?? []).map((n: string) => String(n).trim()).filter(Boolean));
-    return {
-      cpf: draft.cpf,
-      name: data.fullName?.trim() || "Solicitante da Prévia",
-      platforms,
-      depositsCents: typeof data.depositsCents === "number" ? data.depositsCents : null,
-      withdrawalsCents: typeof data.withdrawalsCents === "number" ? data.withdrawalsCents : null,
-    };
-  } catch {
-    return null;
-  }
+/** CPF, nome, plataformas e valores do caso acompanhado, usados nos arquivos de exemplo. */
+async function exampleOwner(): Promise<ExampleOwner | null> {
+  const raw = cookieStore.get(TRACKING_COOKIE)?.value;
+  const caseId = raw?.split(".")[0];
+  if (!caseId) return null;
+  const c = (await prisma.case.findUnique({
+    where: { id: caseId },
+    select: {
+      declaredDeposits: true,
+      declaredWithdrawals: true,
+      user: { select: { cpf: true, fullName: true } },
+      platforms: { select: { platform: { select: { name: true } } } },
+    },
+  })) as {
+    declaredDeposits: string | null;
+    declaredWithdrawals: string | null;
+    user: { cpf: string | null; fullName: string };
+    platforms: { platform: { name: string } }[];
+  } | null;
+  if (!c?.user.cpf) return null;
+  return {
+    cpf: c.user.cpf,
+    name: c.user.fullName,
+    platforms: c.platforms.map((p) => p.platform.name),
+    depositsCents: decimalToCents(c.declaredDeposits),
+    withdrawalsCents: decimalToCents(c.declaredWithdrawals),
+  };
 }
 
 function sendToUpload(file: File) {
   const input = document.querySelector<HTMLInputElement>('input[type="file"]');
-  if (!input) return toast(`Avance até a etapa “Envie seu ComprovaBet ${YEAR}” para usar os arquivos de exemplo.`);
+  if (!input) return toast("Os arquivos de exemplo são enviados na tela de documentos do acompanhamento.");
   if (input.disabled) return toast("Marque a autorização de tratamento dos dados antes de enviar o arquivo.");
   const transfer = new DataTransfer();
   transfer.items.add(file);
@@ -312,8 +291,8 @@ function fillExampleCpf() {
   input.focus();
 }
 
-/** Atalhos discretos do formulário: CPF fictício e arquivos de exemplo (sem cobrir os botões do site). */
-function ExamplesTip({ pathname }: { pathname: string }) {
+/** Atalhos discretos: CPF fictício no formulário e arquivos de exemplo no envio de documentos (sem cobrir os botões do site). */
+function ExamplesTip() {
   const hasCpf = useElementPresent("#cpf");
   const hasUpload = useElementPresent('input[type="file"]');
   const [open, setOpen] = useState(false);
@@ -325,8 +304,8 @@ function ExamplesTip({ pathname }: { pathname: string }) {
     setBusy(true);
     try {
       if (kind === "photo") return sendToUpload(await examplePhoto());
-      const owner = await exampleOwner(pathname);
-      if (!owner) return toast("Informe e continue a etapa “Seus dados” (com o CPF) antes de usar os exemplos.");
+      const owner = await exampleOwner();
+      if (!owner) return toast("Abra um caso no acompanhamento antes de usar os exemplos.");
       sendToUpload(
         kind === "mine" ? examplePdf(owner.name, formatCpf(owner.cpf), owner) : examplePdf("Outra Pessoa Fictícia", OTHER_CPF),
       );
@@ -378,7 +357,7 @@ function TipFor({ pathname }: { pathname: string }) {
   if (closed[pathname]) return null;
   if (pathname === "/acompanhar" && !cookieStore.has(TRACKING_COOKIE)) return <TrackingTip />;
   if (pathname === "/admin/login" && !cookieStore.has(ADMIN_COOKIE)) return <AdminTip onClose={close} />;
-  if (pathname === "/analise" || pathname === "/acompanhar/documentos") return <ExamplesTip pathname={pathname} />;
+  if (pathname === "/analise" || pathname === "/acompanhar/documentos") return <ExamplesTip />;
   return null;
 }
 

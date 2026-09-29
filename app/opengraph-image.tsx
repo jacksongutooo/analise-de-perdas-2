@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { config } from "@/lib/env";
+import { HOOK_SUBTITLE, HOOK_TITLE } from "@/lib/intake";
 import { site } from "@/lib/site";
 
 // Imagem exibida quando o link do site é compartilhado (WhatsApp, redes sociais).
@@ -42,13 +42,11 @@ export default function OpenGraphImage() {
           <div style={{ display: "flex", marginLeft: 20, fontSize: 34, fontWeight: 600 }}>{site.name}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", fontSize: 80, fontWeight: 700, lineHeight: 1.05, letterSpacing: -2 }}>Teve perdas em apostas online?</div>
-          <div style={{ display: "flex", marginTop: 24, fontSize: 34, color: "#3a4658" }}>
-            {`Envie seu ComprovaBet ${config.comprovabetYear} para uma análise documental do seu caso.`}
-          </div>
+          <div style={{ display: "flex", fontSize: 72, fontWeight: 700, lineHeight: 1.05, letterSpacing: -2 }}>{HOOK_TITLE}</div>
+          <div style={{ display: "flex", marginTop: 24, fontSize: 34, color: "#3a4658" }}>{HOOK_SUBTITLE}</div>
         </div>
         <div style={{ display: "flex", paddingTop: 28, borderTop: "2px solid #c5ced9", fontSize: 26, color: "#6a7585" }}>
-          {"100% online • Análise documental • Acompanhamento em todas as etapas"}
+          {"100% online • Sem documentos para começar • Resultado na hora"}
         </div>
       </div>
     ),

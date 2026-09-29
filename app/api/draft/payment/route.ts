@@ -18,7 +18,7 @@ const EXPIRED = "Sua sessão de envio expirou. Preencha seus dados novamente.";
  */
 export async function GET(req: Request) {
   const draft = await authenticateDraft(req);
-  if (!draft) return NextResponse.json({ error: EXPIRED, field: "documents" }, { status: 401 });
+  if (!draft) return NextResponse.json({ error: EXPIRED, field: "draft" }, { status: 401 });
   const manual = new URL(req.url).searchParams.get("verificar") === "1";
   try {
     const view = await draftPaymentView(draft.id, { manual });

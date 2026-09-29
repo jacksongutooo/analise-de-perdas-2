@@ -1,9 +1,7 @@
 import { Prisma } from "@prisma/client";
-import { addBusinessDays } from "@/lib/business-days";
+import { addBusinessDays, contactDeadlineFrom } from "@/lib/business-days";
 import { PAYMENT_NOTICE, SERVICE_TERMS_CHECKBOX, SERVICE_TERMS_VERSION } from "@/lib/comprovabet";
 import { prisma } from "@/lib/db";
-import { AUTO_APPROVAL_NOTE } from "@/lib/documents/pre-analysis";
-import { runPreAnalysis } from "@/lib/documents/pre-analysis-run";
 import { config } from "@/lib/env";
 import { centsToDecimal, normalizePhoneBR } from "@/lib/format";
 import { COMMITMENT_VERSION, commitmentText } from "@/lib/options";
@@ -11,7 +9,7 @@ import { paymentMethodLabel, providerLabel } from "@/lib/payments/types";
 import { generateProtocol } from "@/lib/protocol";
 import { getStorage } from "@/lib/storage";
 import { resolvePlatforms } from "./platforms";
-import type { SubmissionData } from "./submission";
+import type { IntakeAnswers, LegacySubmissionData, PreferencesData } from "./submission";
 
 export class SubmissionError extends Error {
   field?: string;
@@ -27,28 +25,76 @@ export function computeDeclaredLoss(depositsCents: number, withdrawalsCents: num
   return { raw, loss: Math.max(0, raw), needsReview: raw < 0 };
 }
 
-/** O rascunho tem o CPF e um ComprovaBet válido? (exigido para pagar e para enviar). */
+/** O rascunho tem o CPF registrado? (exigido para gerar o PIX). */
 export async function assertDraftReady(draftId: string): Promise<void> {
   const draft = await prisma.caseDraft.findUnique({ where: { id: draftId }, select: { cpf: true } });
   if (!draft?.cpf) throw new SubmissionError("Informe seu CPF para continuar.", "cpf");
-  const ok = await prisma.document.count({
-    where: { draftId, category: "comprovabet", OR: [{ cpfCheck: null }, { cpfCheck: { not: "mismatch" } }] },
-  });
-  if (!ok) throw new SubmissionError("Envie o seu ComprovaBet para continuar.", "documents");
 }
 
+/** Colunas das preferências de contato (informadas depois do pagamento). */
+export function preferencesData(prefs: PreferencesData, at: Date) {
+  return { evidencePreference: prefs.evidence, contactChannel: prefs.channel, contactPeriod: prefs.contactPeriod, preferencesAt: at };
+}
+
+/**
+ * Grava as preferências de contato no caso. Depois do primeiro contato da equipe, elas já não mudam
+ * (devolve false nesse caso).
+ */
+export async function saveContactPreferences(caseId: string, prefs: PreferencesData): Promise<boolean> {
+  const result = await prisma.case.updateMany({ where: { id: caseId, contactedAt: null }, data: preferencesData(prefs, new Date()) });
+  return result.count > 0;
+}
+
+/** Campos do caso que vêm das respostas do formulário anterior (tipo de aposta e valores exatos). */
+function legacyCaseFields(data: LegacySubmissionData) {
+  const balance = data.hasBalance ? (data.balanceCents ?? 0) : 0;
+  const declared = computeDeclaredLoss(data.depositsCents, data.withdrawalsCents, balance);
+  return {
+    fields: {
+      betType: data.betType,
+      sportsBetKind: data.betType === "sports" ? data.sportsKind : null,
+      casinoGames: data.betType === "casino" ? data.casinoGames : [],
+      mainLossArea: data.betType === "both" ? data.mainLossArea : null,
+      controlLoss: data.controlLoss,
+      situations: data.situations,
+      situationOther: data.situations.includes("other") ? data.situationOther : null,
+      declaredDeposits: centsToDecimal(data.depositsCents),
+      declaredWithdrawals: centsToDecimal(data.withdrawalsCents),
+      declaredBalance: centsToDecimal(balance),
+      declaredLoss: centsToDecimal(declared.loss),
+      declaredNeedsReview: declared.needsReview,
+    },
+    declaration: {
+      deposits: centsToDecimal(data.depositsCents),
+      withdrawals: centsToDecimal(data.withdrawalsCents),
+      hasBalance: data.hasBalance,
+      balance: centsToDecimal(balance),
+      rawResult: centsToDecimal(declared.raw),
+      calculatedLoss: centsToDecimal(declared.loss),
+      needsReview: declared.needsReview,
+    },
+  };
+}
+
+/**
+ * Registra a solicitação com o pagamento confirmado. No formulário atual, o caso nasce sem documento: a equipe
+ * faz o primeiro contato em até 1 dia útil e pede a comprovação pelo acompanhamento. Respostas do formulário
+ * anterior (PIX gerado antes da atualização do site) seguem com o ComprovaBet enviado naquele formulário.
+ */
 export async function submitCase(params: {
   draftId: string;
   isDemo: boolean;
-  data: SubmissionData;
+  answers: IntakeAnswers;
+  preferences?: PreferencesData | null;
   ip: string | null;
   userAgent: string | null;
 }): Promise<{ caseId: string; protocol: string }> {
-  const { data, draftId, isDemo } = params;
+  const { answers, draftId, isDemo } = params;
+  const data = answers.data;
   const { platforms, aliases } = resolvePlatforms(data);
-  if (!platforms.length) throw new SubmissionError("Selecione ao menos uma plataforma.", "platforms");
+  if (!platforms.length) throw new SubmissionError("Selecione ao menos uma casa de apostas.", "platforms");
 
-  // O CPF vem do rascunho (registrado antes do envio do ComprovaBet e usado na conferência do documento).
+  // O CPF vem do rascunho (registrado na etapa dos dados do solicitante).
   const draft = await prisma.caseDraft.findUnique({
     where: { id: draftId },
     select: { cpf: true, termsAcceptedAt: true, termsVersion: true, termsIp: true, termsUserAgent: true },
@@ -56,7 +102,7 @@ export async function submitCase(params: {
   const cpf = draft?.cpf ?? null;
   if (!cpf) throw new SubmissionError("Informe seu CPF para continuar.", "cpf");
 
-  // A análise é paga antes da solicitação: sem pagamento aprovado (e o aceite das condições), não há envio.
+  // A taxa é paga antes da solicitação: sem pagamento aprovado (e o aceite das condições), não há envio.
   const payment = await prisma.payment.findFirst({ where: { draftId, status: "paid" }, orderBy: { paidAt: "desc" } });
   if (!payment) throw new SubmissionError("Conclua o pagamento para solicitar a análise.", "payment");
   if (!draft?.termsAcceptedAt) throw new SubmissionError("Aceite as condições do serviço na tela de pagamento.", "payment");
@@ -72,31 +118,34 @@ export async function submitCase(params: {
     where: { draftId },
     select: { id: true, platformName: true, storageKey: true, category: true, cpfCheck: true },
   });
-  const comprovabet = draftDocs.filter((d) => d.category === "comprovabet" && d.cpfCheck !== "mismatch");
-  if (!comprovabet.length) throw new SubmissionError("Envie o seu ComprovaBet para continuar.", "documents");
-  // Históricos por plataforma enviados antes da mudança para o ComprovaBet continuam aceitos como complemento.
-  const attach = draftDocs.filter(
-    (d) => comprovabet.includes(d) || (d.category !== "comprovabet" && d.platformName && aliases.has(d.platformName.toLowerCase())),
-  );
+  // Só o formulário anterior tinha envio de arquivos: o ComprovaBet (e históricos por plataforma) seguem com o caso.
+  const attach =
+    answers.kind === "legacy"
+      ? draftDocs.filter(
+          (d) =>
+            (d.category === "comprovabet" && d.cpfCheck !== "mismatch") ||
+            (d.category !== "comprovabet" && d.platformName && aliases.has(d.platformName.toLowerCase())),
+        )
+      : [];
   const orphans = draftDocs.filter((d) => !attach.includes(d));
 
   const phone = normalizePhoneBR(data.whatsapp);
   if (!phone) throw new SubmissionError("Informe um WhatsApp válido com DDD.", "whatsapp");
-  const balance = data.hasBalance ? (data.balanceCents ?? 0) : 0;
-  const declared = computeDeclaredLoss(data.depositsCents, data.withdrawalsCents, balance);
-
-  // Pré-análise automática com os arquivos atuais. Aprovada: os arquivos conferidos entram aprovados e o caso já
-  // fica pronto para a análise. Sem ela (ou com pendência), a validação documental fica com a equipe — o pagamento
-  // já foi feito, então o envio nunca é recusado aqui.
-  const pre = await runPreAnalysis(draftId, data).catch((error) => {
-    console.error("[cases] falha na pré-análise no envio", error instanceof Error ? error.message : "erro desconhecido");
-    return null;
-  });
-  const autoApproved = pre?.status === "approved";
-  const autoApprovedIds = new Set(autoApproved ? pre.approvedIds : []);
 
   const now = new Date();
-  // Prazo em dias úteis a partir do envio (feito com o pagamento confirmado).
+  const legacy = answers.kind === "legacy" ? legacyCaseFields(answers.data) : null;
+  // Formulário atual: a equipe faz o primeiro contato em até 1 dia útil depois do pagamento.
+  const intakeFields =
+    answers.kind === "current"
+      ? {
+          lossRange: answers.data.lossRange,
+          firstRequestDeclared: true,
+          contactDeadline: contactDeadlineFrom(paidAt),
+          ...(params.preferences ? preferencesData(params.preferences, now) : {}),
+        }
+      : {};
+  const initialStatus = legacy && attach.length ? "documents_received" : "submitted";
+  // Prazo da análise em dias úteis a partir do envio (feito com o pagamento confirmado).
   const reviewDeadline = addBusinessDays(now, config.reviewDays);
 
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -135,40 +184,19 @@ export async function submitCase(params: {
               protocol,
               createdAt: now,
               userId: user.id,
-              betType: data.betType,
-              sportsBetKind: data.betType === "sports" ? data.sportsKind : null,
-              casinoGames: data.betType === "casino" ? data.casinoGames : [],
-              mainLossArea: data.betType === "both" ? data.mainLossArea : null,
               period: data.period,
-              controlLoss: data.controlLoss,
-              situations: data.situations,
-              situationOther: data.situations.includes("other") ? data.situationOther : null,
-              declaredDeposits: centsToDecimal(data.depositsCents),
-              declaredWithdrawals: centsToDecimal(data.withdrawalsCents),
-              declaredBalance: centsToDecimal(balance),
-              declaredLoss: centsToDecimal(declared.loss),
-              declaredNeedsReview: declared.needsReview,
-              status: autoApproved ? "payment_confirmed" : "documents_received",
+              ...(legacy ? legacy.fields : {}),
+              ...intakeFields,
+              status: initialStatus,
               paymentStatus: "confirmed",
               paymentConfirmedAt: paidAt,
               paymentReference,
-              preAnalysis: pre ? (pre as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
               privacyConsentAt: now,
               privacyConsentIp: params.ip,
               isDemo,
               reviewDeadline,
               platforms: { create: [...slugToId.values()].map((platformId) => ({ platformId })) },
-              declarations: {
-                create: {
-                  deposits: centsToDecimal(data.depositsCents),
-                  withdrawals: centsToDecimal(data.withdrawalsCents),
-                  hasBalance: data.hasBalance,
-                  balance: centsToDecimal(balance),
-                  rawResult: centsToDecimal(declared.raw),
-                  calculatedLoss: centsToDecimal(declared.loss),
-                  needsReview: declared.needsReview,
-                },
-              },
+              ...(legacy ? { declarations: { create: legacy.declaration } } : {}),
               agreements: {
                 create: {
                   accepted: true,
@@ -179,23 +207,25 @@ export async function submitCase(params: {
                   userAgent: draft.termsUserAgent,
                 },
               },
-              commitment: {
-                create: {
-                  accepted: true,
-                  acceptedAt: now,
-                  ip: params.ip,
-                  userAgent: params.userAgent,
-                  textVersion: COMMITMENT_VERSION,
-                  text: commitmentText(config.reviewDays),
-                },
-              },
+              ...(answers.kind === "legacy"
+                ? {
+                    commitment: {
+                      create: {
+                        accepted: true,
+                        acceptedAt: now,
+                        ip: params.ip,
+                        userAgent: params.userAgent,
+                        textVersion: COMMITMENT_VERSION,
+                        text: commitmentText(config.reviewDays),
+                      },
+                    },
+                  }
+                : {}),
               statusHistory: {
                 create: [
                   { toStatus: "submitted", createdAt: now },
-                  { fromStatus: "submitted", toStatus: "documents_received", createdAt: new Date(now.getTime() + 1000) },
-                  // Documento aprovado na pré-análise automática: validação documental concluída.
-                  ...(autoApproved
-                    ? [{ fromStatus: "documents_received" as const, toStatus: "payment_confirmed" as const, createdAt: new Date(now.getTime() + 2000) }]
+                  ...(initialStatus === "documents_received"
+                    ? [{ fromStatus: "submitted" as const, toStatus: "documents_received" as const, createdAt: new Date(now.getTime() + 1000) }]
                     : []),
                 ],
               },
@@ -207,13 +237,7 @@ export async function submitCase(params: {
             const slug = aliases.get((doc.platformName ?? "").toLowerCase());
             await tx.document.update({
               where: { id: doc.id },
-              data: {
-                caseId: caseRow.id,
-                draftId: null,
-                platformId: slug ? (slugToId.get(slug) ?? null) : null,
-                // Só os arquivos que passaram nas conferências automáticas; os demais ficam para a equipe.
-                ...(autoApprovedIds.has(doc.id) ? { status: "valid" as const, reviewedAt: now, reviewNote: AUTO_APPROVAL_NOTE } : {}),
-              },
+              data: { caseId: caseRow.id, draftId: null, platformId: slug ? (slugToId.get(slug) ?? null) : null },
             });
           }
           // Todas as tentativas de pagamento do rascunho (inclusive recusadas) ficam no histórico do caso.
@@ -225,7 +249,7 @@ export async function submitCase(params: {
         { timeout: 20_000 },
       );
 
-      // Arquivos de plataformas desmarcadas não seguem com o caso: são excluídos.
+      // Arquivos que não seguem com o caso (plataformas desmarcadas no formulário anterior) são excluídos.
       if (orphans.length) {
         await prisma.document.deleteMany({ where: { id: { in: orphans.map((o) => o.id) } } });
         const storage = await getStorage();

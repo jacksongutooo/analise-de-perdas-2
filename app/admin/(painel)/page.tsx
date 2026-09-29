@@ -5,14 +5,14 @@ import { getDashboard } from "@/lib/cases/admin-queries";
 import { config } from "@/lib/env";
 import { paymentAvailable } from "@/lib/payments";
 import { formatBRL, formatDate } from "@/lib/format";
-import { BET_TYPE_SHORT } from "@/lib/options";
+import { LOSS_RANGES, labelFor } from "@/lib/options";
 import { CASE_STATUS_LABEL, CASE_STATUS_TONE } from "@/lib/status";
 
 export default async function DashboardPage() {
   await requireAdmin();
   const d = await getDashboard();
   const kpis = [
-    { label: "Validação documental", value: d.groups.new, href: "/admin/casos?status=group:new" },
+    { label: "Novos e em validação", value: d.groups.new, href: "/admin/casos?status=group:new" },
     { label: "Aguardando o cliente", value: d.groups.waiting, href: "/admin/casos?status=group:waiting" },
     { label: "Prontos para análise", value: d.groups.ready, href: "/admin/casos?status=group:ready" },
     { label: "Em análise", value: d.groups.review, href: "/admin/casos?status=group:review" },
@@ -38,6 +38,30 @@ export default async function DashboardPage() {
           {config.analysisPriceCents === null ? "Defina ANALYSIS_PRICE e " : "Defina "}
           BLACKCAT_API_KEY nas variáveis de ambiente.
         </Notice>
+      )}
+
+      {(d.contact.pending > 0 || d.contact.overdue > 0) && (
+        <Link
+          href="/admin/casos?contato=a_fazer"
+          className={
+            d.contact.overdue > 0
+              ? "flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-danger-700/30 bg-danger-50 p-5 shadow-soft hover:border-danger-700/50"
+              : "flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warn-700/30 bg-warn-50 p-5 shadow-soft hover:border-warn-700/50"
+          }
+        >
+          <span>
+            <span className="block text-base font-semibold text-ink">
+              {d.contact.pending + d.contact.overdue === 1
+                ? "1 cliente aguardando o primeiro contato"
+                : `${d.contact.pending + d.contact.overdue} clientes aguardando o primeiro contato`}
+            </span>
+            <span className="text-sm text-ink-soft">Prazo de 1 dia útil depois do pagamento, até as 18h.</span>
+          </span>
+          <span className="flex flex-wrap gap-2">
+            {d.contact.overdue > 0 && <Badge tone="danger">{d.contact.overdue} atrasado{d.contact.overdue === 1 ? "" : "s"}</Badge>}
+            {d.contact.pending > 0 && <Badge tone="warn">{d.contact.pending} no prazo</Badge>}
+          </span>
+        </Link>
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -90,24 +114,26 @@ export default async function DashboardPage() {
         </section>
 
         <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
-          <h2 className="text-sm font-semibold text-ink">Tipo de aposta</h2>
-          <ul className="mt-4 space-y-3">
-            {d.types.map((t) => (
-              <li key={t.type}>
-                <Link href={`/admin/casos?type=${t.type}`} className="block rounded-lg hover:bg-paper">
+          <h2 className="text-sm font-semibold text-ink">Faixa de perda informada</h2>
+          {d.ranges.every((r) => r.count === 0) ? (
+            <p className="mt-3 text-sm text-muted">Sem solicitações do formulário sem documento ainda.</p>
+          ) : (
+            <ul className="mt-4 space-y-3">
+              {d.ranges.map((r) => (
+                <li key={r.range}>
                   <div className="flex justify-between text-sm">
-                    <span className="font-medium text-ink">{BET_TYPE_SHORT[t.type]}</span>
+                    <span className="font-medium text-ink">{labelFor(LOSS_RANGES, r.range)}</span>
                     <span className="tabular-nums text-muted">
-                      {Math.round(t.share * 100)}% · {t.count}
+                      {Math.round(r.share * 100)}% · {r.count}
                     </span>
                   </div>
                   <div className="mt-1.5 h-2 rounded-full bg-navy-50">
-                    <div className="h-full rounded-full bg-navy-900" style={{ width: `${t.share * 100}%` }} />
+                    <div className="h-full rounded-full bg-navy-900" style={{ width: `${r.share * 100}%` }} />
                   </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </div>
 
@@ -122,7 +148,9 @@ export default async function DashboardPage() {
                 <Link href={`/admin/casos/${r.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3.5 hover:bg-paper">
                   <span className="font-medium tabular-nums text-ink">{r.protocol}</span>
                   <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">{r.name}</span>
-                  <span className="text-sm tabular-nums text-ink">{formatBRL(r.declaredLossCents)}</span>
+                  <span className="text-sm tabular-nums text-ink">
+                    {r.declaredLossCents !== null ? formatBRL(r.declaredLossCents) : r.lossRange ? labelFor(LOSS_RANGES, r.lossRange) : "—"}
+                  </span>
                   <Badge tone={CASE_STATUS_TONE[r.status]}>{CASE_STATUS_LABEL[r.status]}</Badge>
                   <span className="text-xs text-muted">{formatDate(r.createdAt)}</span>
                 </Link>

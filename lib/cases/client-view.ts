@@ -3,6 +3,7 @@ import { maskCpf } from "@/lib/cpf";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/env";
 import { decimalToCents } from "@/lib/format";
+import type { ContactChannelValue, ContactPeriodValue, EvidenceValue, LossRangeValue } from "@/lib/options";
 import {
   clientCpfLabel,
   clientDocumentLabel,
@@ -29,6 +30,13 @@ export async function loadClientCase(caseId: string) {
       createdAt: true,
       reviewDeadline: true,
       declaredLoss: true,
+      lossRange: true,
+      evidencePreference: true,
+      contactChannel: true,
+      contactPeriod: true,
+      preferencesAt: true,
+      contactDeadline: true,
+      contactedAt: true,
       identifiedLoss: true,
       identifiedSource: true,
       validatedLoss: true,
@@ -85,7 +93,20 @@ export async function loadClientCase(caseId: string) {
     createdAt: c.createdAt,
     reviewDeadline: c.reviewDeadline,
     cpfMasked: c.user.cpf ? maskCpf(c.user.cpf) : null,
-    declaredLossCents: decimalToCents(c.declaredLoss) ?? 0,
+    /** Valor exato informado nos casos anteriores; no formulário sem documento, só a faixa (lossRange). */
+    declaredLossCents: decimalToCents(c.declaredLoss),
+    lossRange: c.lossRange as LossRangeValue | null,
+    /** Primeiro contato da equipe (formulário sem documento; nulo nos casos anteriores). */
+    contactDeadline: c.contactDeadline,
+    contactedAt: c.contactedAt,
+    preferences: c.preferencesAt
+      ? {
+          evidence: c.evidencePreference as EvidenceValue | null,
+          channel: c.contactChannel as ContactChannelValue | null,
+          contactPeriod: c.contactPeriod as ContactPeriodValue | null,
+          at: c.preferencesAt,
+        }
+      : null,
     identifiedLossCents: c.identifiedSource === "manual" ? decimalToCents(c.identifiedLoss) : null,
     validatedLossCents: decimalToCents(c.validatedLoss),
     nextSteps: c.nextSteps,

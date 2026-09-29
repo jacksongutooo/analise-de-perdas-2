@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans } from "next/font/google";
 import type { ReactNode } from "react";
 import { config } from "@/lib/env";
+import { HOOK_SUBTITLE, HOOK_TITLE } from "@/lib/intake";
 import { site } from "@/lib/site";
 import "./globals.css";
 
@@ -12,17 +13,17 @@ const plex = IBM_Plex_Sans({
   display: "swap",
 });
 
-const DESCRIPTION = `Envie seu ComprovaBet ${config.comprovabetYear} para uma análise documental individual do seu caso, com acompanhamento em todas as etapas. 100% online.`;
+const DESCRIPTION = `${HOOK_SUBTITLE} Sem documentos para começar: responda 5 perguntas e veja o resultado na hora. 100% online.`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
-  title: { default: `${site.name} | Análise documental de perdas em apostas online`, template: `%s | ${site.name}` },
+  title: { default: `${site.name} | Estorno de perdas em apostas online`, template: `%s | ${site.name}` },
   description: DESCRIPTION,
   openGraph: {
     type: "website",
     locale: "pt_BR",
     siteName: site.name,
-    title: "Teve perdas em apostas online?",
+    title: HOOK_TITLE,
     description: DESCRIPTION,
   },
   twitter: { card: "summary_large_image" },

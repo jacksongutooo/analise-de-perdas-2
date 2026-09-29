@@ -27,7 +27,16 @@ const MAX_CENTS = 9_999_999_999;
 async function scopedCase(caseId: string) {
   const c = await prisma.case.findFirst({
     where: { id: caseId, ...demoScope() },
-    select: { id: true, status: true, paymentStatus: true, identifiedLoss: true, identifiedSource: true, userId: true },
+    select: {
+      id: true,
+      status: true,
+      paymentStatus: true,
+      identifiedLoss: true,
+      identifiedSource: true,
+      userId: true,
+      contactDeadline: true,
+      contactedAt: true,
+    },
   });
   if (!c) throw new Error("Caso não encontrado.");
   return c;
@@ -449,12 +458,47 @@ export async function confirmPayment(caseId: string, formData: FormData) {
   back(caseId, "ok=payment", "pagamento");
 }
 
-/** Iniciar análise: depois da validação documental e do pagamento (casos antigos: sem pagamento). */
+/**
+ * Primeiro contato com o cliente (formulário sem documento): registra quem fez e quando. O prazo é de 1 dia útil
+ * depois do pagamento; o cliente vê "Contato realizado" no acompanhamento.
+ */
+export async function markContacted(caseId: string, formData: FormData) {
+  const admin = await requireAdmin();
+  const c = await scopedCase(caseId);
+  if (!c.contactDeadline) back(caseId, "erro=contact", "contato");
+  if (c.contactedAt) back(caseId, "ok=contacted", "contato");
+  const note = text(formData, "note", 1000) || null;
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.case.updateMany({ where: { id: caseId, contactedAt: null }, data: { contactedAt: now, contactedById: admin.id } }),
+    prisma.caseReview.create({ data: { caseId, adminId: admin.id, action: "contact:done", comment: note } }),
+    ...(note ? [prisma.caseNote.create({ data: { caseId, adminId: admin.id, content: `Contato com o cliente: ${note}` } })] : []),
+  ]);
+  back(caseId, "ok=contacted", "contato");
+}
+
+/** Desfaz o registro do contato (marcado por engano): o prazo volta a valer. */
+export async function undoContacted(caseId: string) {
+  const admin = await requireAdmin();
+  const c = await scopedCase(caseId);
+  if (!c.contactedAt) back(caseId, "ok=contact_undone", "contato");
+  await prisma.$transaction([
+    prisma.case.update({ where: { id: caseId }, data: { contactedAt: null, contactedById: null } }),
+    prisma.caseReview.create({ data: { caseId, adminId: admin.id, action: "contact:undone" } }),
+  ]);
+  back(caseId, "ok=contact_undone", "contato");
+}
+
+/**
+ * Iniciar análise: depois da validação documental e do pagamento (casos antigos: sem pagamento). No formulário
+ * sem documento, a equipe pode iniciar a análise direto, com o pagamento confirmado.
+ */
 export async function startAnalysis(caseId: string) {
   const admin = await requireAdmin();
   const c = await scopedCase(caseId);
   const legacyReady = c.paymentStatus === "not_applicable" && ["submitted", "documents_received"].includes(c.status);
-  if (c.status !== "payment_confirmed" && !legacyReady) back(caseId, "erro=start", "resumo");
+  const intakeReady = Boolean(c.contactDeadline) && c.paymentStatus === "confirmed" && ["submitted", "documents_received"].includes(c.status);
+  if (c.status !== "payment_confirmed" && !legacyReady && !intakeReady) back(caseId, "erro=start", "resumo");
   await prisma.$transaction([
     ...transition(caseId, c.status, "under_review", admin.id),
     prisma.caseReview.create({ data: { caseId, adminId: admin.id, action: "analysis:started" } }),

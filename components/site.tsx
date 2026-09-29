@@ -21,7 +21,7 @@ export function SiteHeader({ showTracking = true }: { showTracking?: boolean }) 
       <Logo />
       {showTracking && (
         <Link href="/acompanhar" className="rounded-lg px-3 py-2 text-sm font-medium text-navy-700 transition-colors hover:bg-navy-50">
-          Acompanhar análise
+          Acompanhar solicitação
         </Link>
       )}
     </header>
@@ -47,7 +47,7 @@ export function SiteFooter() {
             Termos de Uso
           </Link>
           <Link href="/acompanhar" className="hover:text-ink">
-            Acompanhar análise
+            Acompanhar solicitação
           </Link>
         </nav>
       </div>
