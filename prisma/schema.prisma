@@ -267,25 +267,27 @@ model FinancialDeclaration {
 }
 
 model CaseDraft {
-  id              String    @id @default(cuid())
-  tokenHash       String    @map("token_hash")
+  id               String    @id @default(cuid())
+  tokenHash        String    @map("token_hash")
   /// CPF informado no formulário, usado na conferência do ComprovaBet. Apagado no envio final.
-  cpf             String?
-  isDemo          Boolean   @default(false) @map("is_demo")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  expiresAt       DateTime  @map("expires_at")
-  submittedAt     DateTime? @map("submitted_at")
-  caseId          String?   @unique @map("case_id")
+  cpf              String?
+  isDemo           Boolean   @default(false) @map("is_demo")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  expiresAt        DateTime  @map("expires_at")
+  submittedAt      DateTime? @map("submitted_at")
+  caseId           String?   @unique @map("case_id")
   /// Respostas do formulário gravadas ao iniciar o pagamento: com o pagamento aprovado, a solicitação
   /// é concluída mesmo que o cliente não volte ao site. Apagadas no envio final.
-  answers         Json?
+  answers          Json?
   /// Aceite das condições do serviço, feito na tela de pagamento (copiado para o caso no envio).
-  termsAcceptedAt DateTime? @map("terms_accepted_at")
-  termsVersion    String?   @map("terms_version")
-  termsIp         String?   @map("terms_ip")
-  termsUserAgent  String?   @map("terms_user_agent")
+  termsAcceptedAt  DateTime? @map("terms_accepted_at")
+  termsVersion     String?   @map("terms_version")
+  termsIp          String?   @map("terms_ip")
+  termsUserAgent   String?   @map("terms_user_agent")
   /// Pré-análise automática do ComprovaBet (resultado da última conferência, antes do pagamento).
-  preAnalysis     Json?     @map("pre_analysis")
+  preAnalysis      Json?     @map("pre_analysis")
+  /// Trava curta enquanto uma cobrança PIX é gerada (evita duas cobranças por cliques repetidos).
+  paymentLockUntil DateTime? @map("payment_lock_until")
 
   case      Case?      @relation(fields: [caseId], references: [id], onDelete: SetNull)
   documents Document[]
@@ -295,48 +297,95 @@ model CaseDraft {
   @@map("case_drafts")
 }
 
+/// Gateway do pagamento. Atual: BlackCat (PIX). "mercadopago" fica só para o histórico de pagamentos antigos.
 enum PaymentProvider {
+  blackcat
   mercadopago
   demo
 
   @@map("payment_provider")
 }
 
+/// Status interno do pagamento: equivalentes a PENDING, PAID, FAILED, CANCELLED e EXPIRED (e REFUNDED, estorno).
 enum PaymentAttemptStatus {
   pending
-  approved
-  rejected
+  paid
+  failed
   cancelled
+  expired
   refunded
 
   @@map("payment_attempt_status")
 }
 
-/// Pagamento da análise pelo gateway, feito antes do envio da solicitação. Cada tentativa é um registro.
+/// Pagamento da análise pelo gateway, feito antes do envio da solicitação. Cada cobrança (PIX) é um registro.
 model Payment {
-  id                String               @id @default(cuid())
-  draftId           String?              @map("draft_id")
-  caseId            String?              @map("case_id")
-  provider          PaymentProvider
-  status            PaymentAttemptStatus @default(pending)
-  statusDetail      String?              @map("status_detail")
-  amount            Decimal              @db.Decimal(14, 2)
-  /// Meio de pagamento informado pelo gateway (pix, credit_card, debit_card...).
-  method            String?
-  checkoutId        String?              @map("checkout_id")
-  checkoutUrl       String?              @map("checkout_url")
-  providerPaymentId String?              @map("provider_payment_id")
-  paidAt            DateTime?            @map("paid_at")
-  isDemo            Boolean              @default(false) @map("is_demo")
-  createdAt         DateTime             @default(now()) @map("created_at")
-  updatedAt         DateTime             @updatedAt @map("updated_at")
+  id                    String               @id @default(cuid())
+  draftId               String?              @map("draft_id")
+  caseId                String?              @map("case_id")
+  provider              PaymentProvider
+  status                PaymentAttemptStatus @default(pending)
+  statusDetail          String?              @map("status_detail")
+  amount                Decimal              @db.Decimal(14, 2)
+  /// Forma de pagamento: "pix". Registros antigos podem ter outras (credit_card...).
+  paymentMethod         String?              @map("payment_method")
+  /// Referência única interna enviada ao gateway (externalRef na BlackCat).
+  externalReference     String?              @unique @map("external_reference")
+  /// Identificador da transação no gateway (transactionId na BlackCat).
+  providerTransactionId String?              @map("provider_transaction_id")
+  /// Status como informado pelo gateway (ex.: PENDING, PAID).
+  providerStatus        String?              @map("provider_status")
+  /// Dados da transação para auditoria (valores, datas e status), sem dados pessoais do cliente.
+  providerPayload       Json?                @map("provider_payload")
+  /// PIX copia e cola e QR Code devolvidos pelo gateway, exibidos ao cliente até o pagamento ou a expiração.
+  pixCopyPaste          String?              @map("pix_copy_paste")
+  pixQrCode             String?              @map("pix_qr_code")
+  pixExpiresAt          DateTime?            @map("pix_expires_at")
+  /// Última consulta do status no gateway (limita as consultas de reserva, quando a notificação não chega).
+  lastCheckedAt         DateTime?            @map("last_checked_at")
+  /// Pagamentos antigos (Mercado Pago): preferência de checkout.
+  checkoutId            String?              @map("checkout_id")
+  checkoutUrl           String?              @map("checkout_url")
+  paidAt                DateTime?            @map("paid_at")
+  isDemo                Boolean              @default(false) @map("is_demo")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
 
-  draft CaseDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
-  case  Case?      @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  draft  CaseDraft?     @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  case   Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  events PaymentEvent[]
 
+  @@unique([provider, providerTransactionId])
   @@index([draftId])
   @@index([caseId])
   @@map("payments")
+}
+
+/// Notificações (webhooks) recebidas do gateway: auditoria e idempotência. Sem dados pessoais do cliente.
+model PaymentEvent {
+  id            String          @id @default(cuid())
+  provider      PaymentProvider
+  /// Evento informado pelo gateway (ex.: transaction.paid).
+  event         String
+  /// transactionId informado na notificação.
+  transactionId String          @map("transaction_id")
+  paymentId     String?         @map("payment_id")
+  /// Status informado na notificação (não vale como prova de pagamento: a confirmação é consultada no gateway).
+  status        String?
+  /// Resultado do processamento: paid, pending, already_paid, not_found, error...
+  result        String?
+  /// Conteúdo da notificação sem dados do cliente.
+  payload       Json?
+  /// Quantas vezes a mesma notificação chegou (entregas repetidas não são processadas de novo).
+  deliveries    Int             @default(1)
+  receivedAt    DateTime        @default(now()) @map("received_at")
+  processedAt   DateTime?       @map("processed_at")
+
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, transactionId, event])
+  @@index([paymentId])
+  @@map("payment_events")
 }
 
 model Document {

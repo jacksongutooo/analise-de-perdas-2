@@ -3,8 +3,8 @@
 Site responsivo (mobile first) para receber, organizar e analisar solicitações de pessoas que tiveram
 perdas em apostas esportivas ou cassino online. O documento principal da análise é o **ComprovaBet anual
 de 2025**, em nome do próprio solicitante: o cliente responde um formulário curto, informa o CPF, envia o
-ComprovaBet (que passa por uma pré-análise automática na hora), paga a análise (Pix ou cartão, pelo Mercado
-Pago), solicita a análise e acompanha o caso por protocolo. Em até 15 dias úteis a equipe entra em contato com o
+ComprovaBet (que passa por uma pré-análise automática na hora), paga a análise por PIX (cobrança gerada pela
+BlackCat, com QR Code e copia e cola na própria tela), solicita a análise e acompanha o caso por protocolo. Em até 15 dias úteis a equipe entra em contato com o
 resultado. A equipe
 trabalha em um painel administrativo com conferência do CPF, ações rápidas com confirmação, leitura
 automática dos documentos, conferência de valores e solicitação de documentos complementares.
@@ -19,6 +19,7 @@ automática dos documentos, conferência de valores e solicitação de documento
 - **PostgreSQL** + **Prisma 6** (migrations versionadas em `prisma/migrations`)
 - Armazenamento privado de arquivos: pasta local (desenvolvimento) ou **S3 compatível** (AWS S3, Cloudflare R2, Backblaze B2, MinIO)
 - Leitura de documentos: `papaparse` (CSV), `xlsx` (XLSX), `unpdf` (PDF com texto)
+- Pagamento por PIX pela API da BlackCat; QR Code desenhado com `uqr` quando a API não devolve a imagem pronta
 - Sem dependência de serviços de autenticação: senhas com scrypt (nativo do Node) e sessões no banco
 
 ## Prévia sem servidor
@@ -32,7 +33,8 @@ navegador. Painel na prévia: `demo@example.com` / `demonstracao-2026`.
 Para gerar de novo depois de alterar o site: `npm run previa` (script `scripts/build-previa.mjs`, código de apoio em
 `previa/src/`). A prévia inclui atalhos que não existem no site real: casos fictícios para abrir direto, CPF de
 exemplo e arquivos de exemplo do ComprovaBet (com o CPF informado, com outro CPF e uma foto). O pagamento da
-análise usa o checkout simulado do modo demonstração (Pix, cartão ou recusa), sem cobrar nada.
+análise usa o PIX simulado do modo demonstração (QR Code e copia e cola fictícios, com botões para simular a
+confirmação ou o vencimento), sem cobrar nada.
 
 ## Rodando localmente
 
@@ -79,19 +81,19 @@ demonstração:
 | Protocolo | Situação |
 |---|---|
 | `DEMO-100001` | Aprovado na pré-análise automática — aguardando início da análise |
-| `DEMO-100002` | Aprovado na pré-análise — aguardando início da análise (cartão recusado antes do Pix aprovado) |
+| `DEMO-100002` | Aprovado na pré-análise — aguardando início da análise (o primeiro PIX expirou; o segundo foi pago) |
 | `DEMO-100007` | Conferência pela equipe — CPF mascarado no documento (pré-análise sem aprovação automática) |
 | `DEMO-100010` | CPF mascarado, aprovado manualmente pela equipe — aguardando início da análise |
 | `DEMO-100008` | CPF divergente marcado pela equipe — documento em nome de outra pessoa |
 | `DEMO-100003` | Complemento solicitado — PDF digitalizado, sem texto e ilegível |
-| `DEMO-100009` | Análise em andamento (pago com cartão) |
+| `DEMO-100009` | Análise em andamento |
 | `DEMO-100004` | Análise em andamento, com complemento enviado durante a análise |
 | `DEMO-100005` / `DEMO-100006` | Análise concluída (elementos insuficientes / concluída com valor validado) |
 | `DEMO-100011` | Caso anterior ao ComprovaBet (sem CPF e sem etapa de pagamento) |
 
-No modo demonstração, o pagamento usa um **checkout simulado** (`/pagamento/demonstracao`), com os botões
-“Pagar com Pix (simulado)”, “Pagar com cartão (simulado)” e “Simular pagamento recusado”. Essa página não
-existe fora do modo demonstração.
+No modo demonstração, o pagamento usa um **PIX simulado**: o QR Code e o copia e cola são fictícios (nenhum valor é
+cobrado) e a própria tela traz os botões “Simular pagamento confirmado” e “Simular PIX expirado”
+(`/api/payments/demo/simulate`, rota que não existe fora do modo demonstração).
 
 Acesso ao painel: `demo@example.com` / `demonstracao-2026` (ou `DEMO_ADMIN_PASSWORD`). Acompanhamento do
 cliente: protocolo + e-mail da tabela exibida pelo seed.
@@ -109,9 +111,8 @@ acessos de demonstração não entram no painel real. O seed se recusa a rodar e
    Na Vercel o armazenamento local não funciona (o sistema recusa essa configuração).
 3. Cadastre as variáveis de `.env.example` no projeto da Vercel, incluindo `AUTH_SECRET` e `CRON_SECRET`
    fortes, `NEXT_PUBLIC_SITE_URL` com o domínio final (https) e os dados da empresa.
-4. Configure o pagamento: `ANALYSIS_PRICE`, `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET`
-   (veja “Pagamento da análise” abaixo). Sem eles, o formulário avisa que o pagamento está indisponível e
-   o painel mostra um alerta.
+4. Configure o pagamento: `ANALYSIS_PRICE`, `BLACKCAT_API_KEY` e `BLACKCAT_BASE_URL` (veja “Pagamento da análise”
+   abaixo). Sem eles, o formulário avisa que o pagamento está indisponível e o painel mostra um alerta.
 5. O comando de build `vercel-build` já executa `prisma migrate deploy`.
 6. Crie o primeiro acesso rodando `npm run admin:create` localmente apontando para o banco de produção.
 7. `vercel.json` agenda a limpeza diária (`/api/cron/cleanup`), que apaga rascunhos abandonados e seus
@@ -126,13 +127,15 @@ Formulário (com o CPF) → compromisso → revisão das respostas → envio do 
 (barra de progresso com as conferências) → **pagamento da análise** → Solicitar análise → análise pela equipe →
 contato em até 15 dias úteis → acompanhamento pelo painel.
 
-- `/` — página inicial curta, com o que ter em mãos (CPF, ComprovaBet, e-mail e WhatsApp).
+- `/` — página inicial curta, com o que ter em mãos (CPF, ComprovaBet, e-mail e WhatsApp) e, em letras pequenas, os
+  requisitos: ComprovaBet do ano em mãos, nunca ter pedido o estorno dessas perdas antes e uma solicitação por CPF.
 - `/analise` — formulário em etapas curtas, com barra de progresso, “Voltar”, salvamento automático no navegador
   (“✓ Informações salvas”) e retomada de onde parou. A etapa 6 traz os dados do solicitante com o **CPF**
   (máscara `000.000.000-00` e dígitos verificadores); depois vêm o compromisso voluntário e a revisão
   “Confira sua solicitação”. A etapa 7 é o envio do **ComprovaBet**, seguido da **Pré-análise** (barra de progresso
   com as conferências, uma a uma) e do **Pagamento da análise**: valor, aviso “Importante”, aceite obrigatório e o
-  botão “Pagar a análise” (Pix ou cartão). O botão **Solicitar análise** só aparece com o pagamento aprovado.
+  botão **Gerar PIX** (QR Code e copia e cola na própria tela, atualizada sozinha com a confirmação). O botão
+  **Solicitar análise** só aparece com o pagamento confirmado.
 - `/analise/recebida` — protocolo `ANL-XXXXXX` e próximos passos.
 - `/acompanhar` — acesso com protocolo + e-mail: etapa atual, linha do tempo em 6 etapas (Cadastro realizado ·
   ComprovaBet enviado · Pagamento confirmado · Validação documental · Análise em andamento · Análise concluída),
@@ -189,47 +192,87 @@ Resultados:
 O resultado fica gravado no rascunho e no caso (`pre_analysis`), aparece no painel e entra na exportação de dados
 do titular. A pré-análise confere o documento, não o resultado do caso.
 
-## Pagamento da análise
+## Pagamento da análise (PIX pela BlackCat)
 
-A análise é paga **antes** da solicitação, na última tela do formulário (depois da revisão). O gateway
-integrado é o **Mercado Pago Checkout Pro** (Pix e cartão de crédito); os dados do cartão são digitados na
-página do Mercado Pago e nunca passam pelo site.
+A análise é paga **antes** da solicitação, na última tela do formulário (depois da pré-análise), por **PIX**. A
+cobrança é criada pela API da BlackCat ([documentação](https://docs.blackcatoficial.com/)) e o QR Code e o código
+copia e cola aparecem na própria tela: o cliente não sai do site. A chave da API fica só no servidor.
 
-1. A tela mostra o valor (`ANALYSIS_PRICE`), o aviso **Importante** (o pagamento refere-se ao serviço de análise
-   do caso) e o **aceite obrigatório** das condições.
-2. “Pagar a análise” grava o aceite (data e hora, versão dos termos, IP e navegador) e as respostas no
-   rascunho, cria a tentativa em `payments` e leva o cliente ao checkout. O valor é sempre definido pelo servidor.
-3. O Mercado Pago avisa o site pelo webhook `/api/payments/webhook/mercadopago` (assinatura conferida com
-   `MERCADOPAGO_WEBHOOK_SECRET`). O status é sempre consultado na API do Mercado Pago — o conteúdo da
-   notificação não serve como prova — e só é aprovado se o valor pago cobrir o valor da análise.
-4. Com o pagamento aprovado, a solicitação é registrada **automaticamente**, mesmo que o cliente feche a página
-   depois de pagar. Quando ele volta ao site (retorno automático do checkout), vê “Pagamento confirmado” e toca em
-   **Solicitar análise**, que mostra o protocolo (a ação é idempotente: não duplica o caso). Se a notificação
-   atrasar, a tela consulta o Mercado Pago a cada poucos segundos.
-5. Com o ComprovaBet aprovado na pré-análise, o caso nasce em **Aguardando início da análise**; sem a aprovação
-   automática, nasce em “Validação documental” e fica nesse status até a equipe aprovar. O prazo (`REVIEW_DAYS`, em
-   **dias úteis**) conta a partir do envio: em até 15 dias úteis a equipe entra em contato para apresentar o
-   resultado e, se o caso puder prosseguir, combinar as condições e as formas de pagamento das próximas etapas.
-   Dias úteis excluem sábados, domingos, feriados nacionais, Carnaval e Corpus Christi (`src/lib/business-days.ts`).
+1. A tela mostra “Pagamento via PIX”, o valor (`ANALYSIS_PRICE`), o aviso **Importante** e o **aceite obrigatório**.
+2. **Gerar PIX** chama `POST /api/payments/blackcat/create`, que valida no servidor nome, e-mail, WhatsApp e CPF,
+   grava o aceite (data e hora, versão dos termos, IP e navegador) e as respostas no rascunho, registra o pagamento
+   como `pending` com uma referência interna única (`AP-AAAAMMDD-XXXXXXXXXX`) e chama
+   `POST {BLACKCAT_BASE_URL}/sales/create-sale` com o cabeçalho `X-API-Key` (valor em centavos,
+   `paymentMethod: "pix"`, item com `tangible: false`, `pix.expiresInDays: 1`, `postbackUrl` e `externalRef`). O
+   valor é sempre o do servidor: qualquer valor enviado pelo navegador é ignorado.
+3. Da resposta da BlackCat são usados `data.transactionId`, `data.status` e `data.paymentData` (`copyPaste`,
+   `qrCodeBase64`, `expiresAt`). A tela mostra o QR Code, o código com o botão **Copiar código PIX** (“Código PIX
+   copiado”), o ID da transação, a validade e “Aguardando confirmação do pagamento”. Se `qrCodeBase64` não trouxer
+   uma imagem, o QR Code é desenhado a partir do próprio copia e cola.
+4. A BlackCat avisa o site em `POST /api/payments/webhook/blackcat` (evento `transaction.paid`). O conteúdo da
+   notificação **não** vale como prova de pagamento: o site consulta `GET /sales/{transactionId}/status` e só marca
+   como pago com o status `PAID` na API e o valor da análise. Cada evento fica em `payment_events`, único por
+   `transactionId` + evento: entregas repetidas respondem 200 sem ser processadas de novo. A conclusão da
+   solicitação roda depois da resposta, para o webhook responder rápido.
+5. Com o pagamento confirmado, a solicitação é registrada **automaticamente**, mesmo que o cliente feche a página. A
+   tela pergunta ao **nosso** servidor a cada 4 segundos se o pagamento já foi confirmado (resposta lida do banco) e
+   muda sozinha para **Pagamento confirmado**; **Solicitar análise** mostra o protocolo (idempotente).
+6. Se a notificação não chegar, o servidor faz uma consulta de reserva do status da transação no máximo uma vez por
+   minuto por PIX aberto (a cada 10 segundos quando o cliente toca em “Verificar pagamento”) e uma última no
+   vencimento. O saldo da conta BlackCat nunca é consultado.
+7. PIX vencido fica `expired`, e a tela oferece **Gerar novo PIX**. Com o ComprovaBet aprovado na pré-análise, o
+   caso nasce em **Aguardando início da análise**; sem a aprovação automática, nasce em “Validação documental”. O
+   prazo (`REVIEW_DAYS`, em **dias úteis**) conta a partir do envio: em até 15 dias úteis a equipe entra em contato
+   para apresentar o resultado e, se o caso puder prosseguir, combinar as condições e as formas de pagamento das
+   próximas etapas. Dias úteis excluem sábados, domingos, feriados nacionais, Carnaval e Corpus Christi
+   (`src/lib/business-days.ts`).
 
-Detalhes de segurança: rascunho com pagamento aprovado (ou aberto nas últimas 24 horas) não pode ser apagado;
-cliques repetidos reaproveitam o mesmo checkout; todas as tentativas (inclusive recusadas) ficam no caso, e o
-painel mostra provedor, forma, valor, data e identificador de cada uma. Estornos feitos no Mercado Pago
-aparecem como “Estornado” na lista de tentativas.
+**Status internos** (`payments.status`): `pending` (PENDING), `paid` (PAID), `failed` (FAILED), `cancelled`
+(CANCELLED), `expired` (EXPIRED) e `refunded` (estorno). Da BlackCat: `PAID` → `paid`, `PENDING` → `pending`,
+`CANCELLED` → `cancelled`, `REFUNDED` → `refunded`, `EXPIRED` → `expired`, `FAILED` → `failed`; qualquer outro
+valor continua pendente (nunca aprova por engano).
 
-**Configuração (Mercado Pago → Suas integrações → sua aplicação):**
+**Segurança:** chave só no servidor (nunca em variável `NEXT_PUBLIC_`, nunca nos logs); CPF nunca inteiro nos logs;
+valor definido no servidor; cliques repetidos e duas abas recebem o mesmo PIX (trava curta no rascunho); rascunho
+com PIX em aberto ou pago não pode ser apagado; erro da BlackCat não chega ao cliente (“Não foi possível gerar o PIX
+agora. Tente novamente em alguns instantes.”), só ao log, sem segredos; a auditoria (`provider_payload` e
+`payment_events.payload`) guarda transação, status, valores e datas, sem os dados do cliente.
 
-| Variável | Onde encontrar |
+**Configuração:**
+
+| Variável | Valor |
 |---|---|
-| `ANALYSIS_PRICE` | valor da análise, ex.: `197,00` |
-| `MERCADOPAGO_ACCESS_TOKEN` | Credenciais de produção → Access Token (`APP_USR-...`). Com credenciais de teste (`TEST-...`), o checkout abre no ambiente de testes |
-| `MERCADOPAGO_WEBHOOK_SECRET` | Webhooks → configure a URL `https://SEU-DOMINIO/api/payments/webhook/mercadopago`, evento **Pagamentos**, e copie a assinatura secreta |
+| `BLACKCAT_API_KEY` | chave da API da BlackCat. Só no servidor: **nunca** com o prefixo `NEXT_PUBLIC_` |
+| `BLACKCAT_BASE_URL` | `https://api.blackcatoficial.com/api` (padrão, se vazio) |
+| `ANALYSIS_PRICE` | valor da análise, ex.: `197,00` (convertido para centavos no servidor) |
+| `NEXT_PUBLIC_SITE_URL` | domínio final com https (monta o `postbackUrl` de cada cobrança) |
 
-O endereço de notificação também é enviado em cada checkout quando `NEXT_PUBLIC_SITE_URL` usa https. Sem a
-assinatura secreta, as notificações ainda são processadas (a consulta à API é a prova), com um alerta no log.
+URL do webhook: `https://SEU-DOMINIO/api/payments/webhook/blackcat`. Ela vai em cada cobrança como `postbackUrl`; se
+o painel da BlackCat também pedir uma URL de notificação, use a mesma.
 
-Casos antigos em “Aguardando pagamento” (fluxo anterior, pagamento depois da validação) continuam funcionando:
-`PAYMENT_URL` + “Já fiz o pagamento” + **Confirmar pagamento** no painel.
+**Cobrança de teste:** com as variáveis configuradas e `DEMO_MODE=false`, preencha o formulário, envie o ComprovaBet,
+marque o aceite e toque em **Gerar PIX** (num ambiente de teste, use um `ANALYSIS_PRICE` baixo, ex.: `1,00`). Pague
+pelo app do banco: em segundos a tela muda para “Pagamento confirmado”.
+
+**Conferir o webhook e as transações no banco:**
+
+```sql
+-- Notificações recebidas: evento, resultado do processamento e número de entregas
+select event, transaction_id, status, result, deliveries, received_at, processed_at
+from payment_events order by received_at desc limit 20;
+
+-- Transações pagas
+select external_reference, provider_transaction_id, amount, payment_method, status, paid_at, status_detail
+from payments where provider = 'blackcat' and status = 'paid' order by paid_at desc;
+```
+
+`status_detail` informa como a confirmação chegou: “confirmado pela BlackCat (webhook transaction.paid)” ou
+“(consulta de status)”. No painel, a seção **Pagamento** do caso lista cada tentativa com a transação e a referência.
+
+Pagamentos antigos do Mercado Pago continuam na tabela (provedor `mercadopago`), com os status renomeados
+(`approved` → `paid`, `rejected` → `failed`). Casos antigos em “Aguardando pagamento” (fluxo anterior, pagamento
+depois da validação) continuam com as instruções enviadas pela equipe, “Já fiz o pagamento” e **Confirmar
+pagamento** no painel.
 
 ## Os três valores (nunca se misturam)
 
@@ -315,8 +358,8 @@ npm test
 Cobrem formatação de valores, cálculo da perda, validação do formulário no servidor, CPF (dígitos verificadores,
 máscaras, busca no texto e conferência de PDFs com CPF igual, divergente, mascarado ou ausente), linha do tempo
 em 6 etapas (com o pagamento antes ou depois da validação), a pré-análise automática (CPF, ano, tipo, plataformas,
-valores, arquivos com e sem texto), o prazo em dias úteis (feriados e Páscoa), a tela de pagamento, o Mercado Pago (status,
-assinatura das notificações, checkout e consultas com respostas simuladas), regras de divergência e de andamento,
+valores, arquivos com e sem texto), o prazo em dias úteis (feriados e Páscoa), a tela de pagamento, a BlackCat (criação do
+PIX, consulta de status, notificações e erros, com respostas simuladas) e o QR Code, regras de divergência e de andamento,
 senhas, validação do conteúdo dos arquivos e a leitura automática de CSV, XLSX e PDF.
 
 ## Antes de publicar
@@ -330,8 +373,9 @@ senhas, validação do conteúdo dos arquivos e a leitura automática de CSV, XL
 - [ ] Testar a leitura automática com históricos reais de cada plataforma e ajustar as regras se necessário.
 - [ ] Testar a conferência do CPF e a pré-análise com ComprovaBets reais (PDF com texto) e conferir `COMPROVABET_YEAR`.
       Se o documento real usar outros termos, ajuste as regras de tipo e de valores em `src/lib/documents/pre-analysis-check.ts`.
-- [ ] Configurar o pagamento: `ANALYSIS_PRICE`, `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET`, e fazer
-      um pagamento real de ponta a ponta (Pix e cartão) antes de divulgar o site.
+- [ ] Configurar o pagamento (`ANALYSIS_PRICE`, `BLACKCAT_API_KEY`, `BLACKCAT_BASE_URL`) e fazer um PIX real de ponta a
+      ponta, com valor baixo, antes de divulgar o site. Na primeira notificação real, confira em
+      `payment_events.payload` se o evento e o `transactionId` chegaram (o formato é lido em `src/lib/payments/blackcat.ts`).
 - [ ] Definir com a assessoria jurídica a política de cancelamento e reembolso (inclusive o direito de
       arrependimento do art. 49 do CDC, citado nos Termos) e revisar o texto das condições do serviço. Ao mudar
       esse texto, atualize `SERVICE_TERMS_VERSION` em `src/lib/comprovabet.ts`.

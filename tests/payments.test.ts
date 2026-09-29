@@ -1,144 +1,249 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { describe, test } from "node:test";
-import { fromMercadoPago, mapMercadoPagoStatus, mercadoPagoProvider, verifyMercadoPagoSignature } from "@/lib/payments/mercadopago";
-import { paymentMethodLabel } from "@/lib/payments/types";
+import {
+  BlackCatError,
+  blackCatProvider,
+  createSaleBody,
+  mapBlackCatStatus,
+  parseBlackCatNotification,
+  qrImageFrom,
+} from "@/lib/payments/blackcat";
+import { pixQrDataUri } from "@/lib/payments/qr";
+import { paymentMethodLabel, providerLabel } from "@/lib/payments/types";
 
 type Call = { url: string; init: RequestInit & { headers: Record<string, string> } };
 
-function fakeFetch(responses: unknown[], status = 200) {
+function fakeFetch(responses: { status?: number; body: unknown }[]) {
   const calls: Call[] = [];
   const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init as Call["init"] });
-    const body = responses.shift() ?? {};
-    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    const next = responses.shift() ?? { body: {} };
+    return new Response(JSON.stringify(next.body), { status: next.status ?? 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   return { calls, fetcher };
 }
 
-const checkoutInput = {
-  paymentId: "pay_123",
+const API_KEY = "bc_live_chave_de_teste_123";
+const EMV = "00020126580014br.gov.bcb.pix0136a1b2c3d4-e5f6-7890-abcd-ef1234567890520400005303986540597.005802BR5909BLACKCAT6009SAO PAULO62070503***6304ABCD";
+const input = {
+  externalRef: "AP-20260928-K7Q2M9XDPA",
   amountCents: 9700,
-  description: "Análise documental de perdas em apostas",
-  payer: { name: "Ana Souza", email: "ana@exemplo.com.br" },
-  returnUrl: "https://site.exemplo/analise?pagamento=retorno",
-  notificationUrl: "https://site.exemplo/api/payments/webhook/mercadopago",
+  title: "Serviço de análise documental",
+  customer: { name: "Ana Souza", email: "ana@exemplo.com.br", phone: "11999999999", cpf: "52998224725" },
+  postbackUrl: "https://site.exemplo/api/payments/webhook/blackcat",
+  expiresInDays: 1,
 };
 
-describe("Mercado Pago", () => {
-  test("status do Mercado Pago → status do pagamento", () => {
-    assert.equal(mapMercadoPagoStatus("approved"), "approved");
-    assert.equal(mapMercadoPagoStatus("rejected"), "rejected");
-    assert.equal(mapMercadoPagoStatus("cancelled"), "cancelled");
-    assert.equal(mapMercadoPagoStatus("refunded"), "refunded");
-    assert.equal(mapMercadoPagoStatus("charged_back"), "refunded");
-    // Em análise, autorizado ou desconhecido: continua pendente (nunca aprova por engano).
-    for (const s of ["in_process", "pending", "authorized", "in_mediation", "", null, undefined]) assert.equal(mapMercadoPagoStatus(s), "pending");
-  });
+// Resposta de criação no formato da documentação da BlackCat.
+const saleResponse = {
+  success: true,
+  data: {
+    transactionId: "TXN-1733654321-ABC123",
+    status: "PENDING",
+    paymentMethod: "pix",
+    amount: 9700,
+    netAmount: 9409,
+    fees: 291,
+    invoiceUrl: "https://blackcat.squarify.co/checkout/TXN-1733654321-ABC123",
+    createdAt: "2026-09-28T13:30:00.000Z",
+    paymentData: {
+      qrCode: EMV,
+      qrCodeBase64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      copyPaste: EMV,
+      expiresAt: "2026-09-29T13:30:00.000Z",
+    },
+  },
+};
 
-  test("conversão do pagamento (Pix e cartão, valor em centavos)", () => {
-    const pix = fromMercadoPago({
-      id: 998877,
-      status: "approved",
-      status_detail: "accredited",
-      payment_method_id: "pix",
-      payment_type_id: "bank_transfer",
-      date_approved: "2026-09-25T15:04:05.000-03:00",
-      transaction_amount: 97,
-      external_reference: "pay_123",
+describe("BlackCat: status", () => {
+  test("status da BlackCat → status interno (desconhecido fica pendente)", () => {
+    assert.equal(mapBlackCatStatus("PAID"), "paid");
+    assert.equal(mapBlackCatStatus("paid"), "paid");
+    assert.equal(mapBlackCatStatus("PENDING"), "pending");
+    assert.equal(mapBlackCatStatus("CANCELLED"), "cancelled");
+    assert.equal(mapBlackCatStatus("REFUNDED"), "refunded");
+    assert.equal(mapBlackCatStatus("EXPIRED"), "expired");
+    assert.equal(mapBlackCatStatus("FAILED"), "failed");
+    for (const s of ["WAITING", "", null, undefined, 42]) assert.equal(mapBlackCatStatus(s), "pending");
+  });
+});
+
+describe("BlackCat: criação do PIX", () => {
+  test("corpo da venda: centavos, pix, serviço digital (tangible false), CPF e referência interna", () => {
+    assert.deepEqual(createSaleBody(input), {
+      amount: 9700,
+      currency: "BRL",
+      paymentMethod: "pix",
+      items: [{ title: "Serviço de análise documental", quantity: 1, unitPrice: 9700, tangible: false }],
+      customer: { name: "Ana Souza", email: "ana@exemplo.com.br", phone: "11999999999", document: { number: "52998224725", type: "cpf" } },
+      pix: { expiresInDays: 1 },
+      postbackUrl: "https://site.exemplo/api/payments/webhook/blackcat",
+      externalRef: "AP-20260928-K7Q2M9XDPA",
     });
-    assert.equal(pix.providerPaymentId, "998877");
-    assert.equal(pix.method, "pix");
-    assert.equal(pix.amountCents, 9700);
-    assert.equal(pix.reference, "pay_123");
-    assert.equal(pix.paidAt?.toISOString(), "2026-09-25T18:04:05.000Z");
-    const card = fromMercadoPago({ id: "1", status: "rejected", payment_method_id: "visa", payment_type_id: "credit_card", transaction_amount: 96.999 });
-    assert.equal(card.method, "credit_card");
-    assert.equal(card.status, "rejected");
-    assert.equal(card.amountCents, 9700);
-    assert.equal(card.paidAt, null);
-    assert.equal(paymentMethodLabel("pix"), "Pix");
-    assert.equal(paymentMethodLabel("credit_card"), "Cartão de crédito");
-    assert.equal(paymentMethodLabel(null), "—");
+    // Sem endereço público (site sem https), a venda vai sem postbackUrl.
+    assert.equal("postbackUrl" in createSaleBody({ ...input, postbackUrl: null }), false);
   });
 
-  test("assinatura das notificações (x-signature)", () => {
-    const secret = "chave-secreta-de-teste";
-    const ts = "1758826800";
-    const sign = (manifest: string) => createHmac("sha256", secret).update(manifest).digest("hex");
-    const v1 = sign(`id:123456;request-id:req-1;ts:${ts};`);
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: `ts=${ts},v1=${v1}`, requestId: "req-1", dataId: "123456" }), true);
-    // Espaços no cabeçalho são aceitos.
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: `ts=${ts}, v1=${v1}`, requestId: "req-1", dataId: "123456" }), true);
-    // Qualquer alteração invalida.
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: `ts=${ts},v1=${v1}`, requestId: "req-1", dataId: "654321" }), false);
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: `ts=${ts},v1=${v1}`, requestId: "outro", dataId: "123456" }), false);
-    assert.equal(verifyMercadoPagoSignature({ secret: "outra-chave", signature: `ts=${ts},v1=${v1}`, requestId: "req-1", dataId: "123456" }), false);
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: null, requestId: "req-1", dataId: "123456" }), false);
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: `v1=${v1}`, requestId: "req-1", dataId: "123456" }), false);
-    assert.equal(verifyMercadoPagoSignature({ secret: "", signature: `ts=${ts},v1=${v1}`, requestId: "req-1", dataId: "123456" }), false);
-    // Id alfanumérico entra em minúsculas no manifesto.
-    const alnum = sign(`id:abc123;request-id:req-2;ts:${ts};`);
-    assert.equal(verifyMercadoPagoSignature({ secret, signature: `ts=${ts},v1=${alnum}`, requestId: "req-2", dataId: "ABC123" }), true);
+  test("POST /sales/create-sale com X-API-Key e leitura da resposta oficial", async () => {
+    const { calls, fetcher } = fakeFetch([{ body: saleResponse }]);
+    const provider = blackCatProvider({ apiKey: API_KEY, baseUrl: "https://api.blackcatoficial.com/api/", fetcher });
+    const charge = await provider.createPixCharge(input);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.url, "https://api.blackcatoficial.com/api/sales/create-sale");
+    assert.equal(calls[0]!.init.method, "POST");
+    assert.equal(calls[0]!.init.headers["X-API-Key"], API_KEY);
+    assert.equal(calls[0]!.init.headers["Content-Type"], "application/json");
+    assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), createSaleBody(input));
+
+    assert.equal(charge.transactionId, "TXN-1733654321-ABC123");
+    assert.equal(charge.status, "pending");
+    assert.equal(charge.providerStatus, "PENDING");
+    assert.equal(charge.amountCents, 9700);
+    assert.equal(charge.copyPaste, EMV);
+    assert.match(charge.qrCodeImage ?? "", /^data:image\/png;base64,iVBORw0KGgo/);
+    assert.equal(charge.expiresAt?.toISOString(), "2026-09-29T13:30:00.000Z");
+    // Auditoria sem dados do cliente.
+    assert.deepEqual(Object.keys(charge.audit).sort(), ["amount", "createdAt", "expiresAt", "fees", "netAmount", "paymentMethod", "status", "transactionId"]);
+    assert.ok(!JSON.stringify(charge.audit).includes("52998224725"));
   });
 
-  test("checkout: preferência com valor, referência, retorno, notificação e só Pix/cartão", async () => {
-    const { calls, fetcher } = fakeFetch([
-      { id: "pref-1", init_point: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-1", sandbox_init_point: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-1" },
-    ]);
-    const mp = mercadoPagoProvider("APP_USR-token-de-producao", fetcher);
-    const out = await mp.createCheckout(checkoutInput);
-    assert.deepEqual(out, { checkoutId: "pref-1", checkoutUrl: "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=pref-1" });
-    const call = calls[0]!;
-    assert.equal(call.url, "https://api.mercadopago.com/checkout/preferences");
-    assert.equal(call.init.method, "POST");
-    assert.equal(call.init.headers.Authorization, "Bearer APP_USR-token-de-producao");
-    assert.equal(call.init.headers["X-Idempotency-Key"], "pay_123");
-    const body = JSON.parse(String(call.init.body));
-    assert.equal(body.items[0].unit_price, 97);
-    assert.equal(body.items[0].currency_id, "BRL");
-    assert.equal(body.items[0].quantity, 1);
-    assert.equal(body.external_reference, "pay_123");
-    assert.equal(body.auto_return, "approved");
-    assert.equal(body.back_urls.success, checkoutInput.returnUrl);
-    assert.equal(body.notification_url, checkoutInput.notificationUrl);
-    assert.deepEqual(body.payment_methods.excluded_payment_types, [{ id: "ticket" }, { id: "atm" }]);
-    assert.equal(body.payer.email, "ana@exemplo.com.br");
+  test("qrCodeBase64 com o texto do PIX (e não uma imagem): QR desenhado a partir do copia e cola", async () => {
+    const body = structuredClone(saleResponse);
+    body.data.paymentData.qrCodeBase64 = EMV;
+    const { fetcher } = fakeFetch([{ body }]);
+    const charge = await blackCatProvider({ apiKey: API_KEY, fetcher }).createPixCharge(input);
+    assert.equal(charge.qrCodeImage, null);
+    assert.equal(charge.copyPaste, EMV);
+
+    // Sem "copyPaste": o texto do PIX vem de "qrCode".
+    const onlyQr = structuredClone(saleResponse) as { data: { paymentData: Record<string, unknown> } };
+    delete onlyQr.data.paymentData.copyPaste;
+    const second = await blackCatProvider({ apiKey: API_KEY, fetcher: fakeFetch([{ body: onlyQr }]).fetcher }).createPixCharge(input);
+    assert.equal(second.copyPaste, EMV);
   });
 
-  test("checkout: credenciais de teste usam o ambiente de testes; sem endereço público, sem notificação", async () => {
-    const { calls, fetcher } = fakeFetch([{ id: "pref-2", init_point: "https://prod/x", sandbox_init_point: "https://sandbox/x" }]);
-    const mp = mercadoPagoProvider("TEST-123", fetcher);
-    const out = await mp.createCheckout({ ...checkoutInput, notificationUrl: null });
-    assert.equal(out.checkoutUrl, "https://sandbox/x");
-    assert.ok(!("notification_url" in JSON.parse(String(calls[0]!.init.body))));
-  });
-
-  test("consulta por referência prefere o pagamento aprovado", async () => {
-    const { calls, fetcher } = fakeFetch([
-      {
-        results: [
-          { id: 2, status: "rejected", payment_method_id: "visa", payment_type_id: "credit_card", transaction_amount: 97, external_reference: "pay_123" },
-          { id: 1, status: "approved", payment_method_id: "pix", transaction_amount: 97, date_approved: "2026-09-25T15:00:00Z", external_reference: "pay_123" },
-        ],
-      },
-      { results: [] },
-    ]);
-    const mp = mercadoPagoProvider("APP_USR-x", fetcher);
-    const found = await mp.findByReference("pay_123");
-    assert.equal(found?.providerPaymentId, "1");
-    assert.equal(found?.status, "approved");
-    assert.ok(calls[0]!.url.startsWith("https://api.mercadopago.com/v1/payments/search?external_reference=pay_123"));
-    assert.equal(await mp.findByReference("pay_999"), null);
-  });
-
-  test("erro da API vira exceção sem expor o token", async () => {
-    const { fetcher } = fakeFetch([{ message: "invalid" }], 401);
-    const mp = mercadoPagoProvider("APP_USR-segredo", fetcher);
-    await assert.rejects(mp.getPayment("123"), (error: Error) => {
-      assert.ok(error.message.includes("401"));
-      assert.ok(!error.message.includes("APP_USR-segredo"));
+  test("erro da BlackCat: erro técnico sem a chave e sem o CPF (para o log)", async () => {
+    const { fetcher } = fakeFetch([{ status: 401, body: { success: false, message: `Chave ${API_KEY} inválida para o documento 529.982.247-25` } }]);
+    await assert.rejects(blackCatProvider({ apiKey: API_KEY, fetcher }).createPixCharge(input), (error: unknown) => {
+      assert.ok(error instanceof BlackCatError);
+      assert.equal(error.status, 401);
+      assert.match(error.message, /HTTP 401/);
+      assert.ok(!error.message.includes(API_KEY));
+      assert.ok(!error.message.includes("529.982.247-25"));
       return true;
     });
+    // success: false com HTTP 200, e resposta sem o código PIX.
+    await assert.rejects(
+      blackCatProvider({ apiKey: API_KEY, fetcher: fakeFetch([{ body: { success: false, message: "Valor inválido" } }]).fetcher }).createPixCharge(input),
+      /Valor inválido/,
+    );
+    const noCode = structuredClone(saleResponse) as { data: { paymentData: Record<string, unknown> } };
+    noCode.data.paymentData = {};
+    await assert.rejects(blackCatProvider({ apiKey: API_KEY, fetcher: fakeFetch([{ body: noCode }]).fetcher }).createPixCharge(input), /sem o código PIX/);
+  });
+
+  test("falha de conexão vira BlackCatError (sem detalhes da requisição)", async () => {
+    const fetcher = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    await assert.rejects(blackCatProvider({ apiKey: API_KEY, fetcher }).createPixCharge(input), /BlackCat indisponível em \/sales\/create-sale: falha de conexão/);
+  });
+});
+
+describe("BlackCat: consulta de status (confirmação real)", () => {
+  test("GET /sales/{transactionId}/status", async () => {
+    const { calls, fetcher } = fakeFetch([
+      {
+        body: {
+          success: true,
+          data: {
+            transactionId: "TXN-1",
+            status: "PAID",
+            paymentMethod: "PIX",
+            amount: 9700,
+            netAmount: 9409,
+            fees: 291,
+            paidAt: "2026-09-28T13:35:00.000Z",
+            endToEndId: "E1234567820260928133500000000001",
+          },
+        },
+      },
+    ]);
+    const tx = await blackCatProvider({ apiKey: API_KEY, fetcher }).getTransaction("TXN-1");
+    assert.equal(calls[0]!.url, "https://api.blackcatoficial.com/api/sales/TXN-1/status");
+    assert.equal(calls[0]!.init.method, "GET");
+    assert.equal(calls[0]!.init.headers["X-API-Key"], API_KEY);
+    assert.equal(tx?.status, "paid");
+    assert.equal(tx?.paymentMethod, "pix");
+    assert.equal(tx?.amountCents, 9700);
+    assert.equal(tx?.paidAt?.toISOString(), "2026-09-28T13:35:00.000Z");
+    assert.equal(tx?.audit.endToEndId, "E1234567820260928133500000000001");
+  });
+
+  test("transação inexistente (404) e resposta de outra transação", async () => {
+    assert.equal(await blackCatProvider({ apiKey: API_KEY, fetcher: fakeFetch([{ status: 404, body: { success: false } }]).fetcher }).getTransaction("TXN-X"), null);
+    const other = fakeFetch([{ body: { success: true, data: { transactionId: "TXN-OUTRA", status: "PAID" } } }]);
+    await assert.rejects(blackCatProvider({ apiKey: API_KEY, fetcher: other.fetcher }).getTransaction("TXN-1"), /outra transação/);
+  });
+});
+
+describe("BlackCat: notificação (webhook)", () => {
+  test("transaction.paid com os dados em data: evento, transactionId e referência; sem dados do cliente", () => {
+    const n = parseBlackCatNotification({
+      event: "transaction.paid",
+      timestamp: "2026-09-28T13:35:01.000Z",
+      data: {
+        transactionId: "TXN-1",
+        externalReference: "AP-20260928-K7Q2M9XDPA",
+        status: "PAID",
+        amount: 9700,
+        paymentMethod: "pix",
+        customer: { name: "Ana Souza", document: "52998224725", email: "ana@exemplo.com.br" },
+        utm: { source: "instagram" },
+      },
+    });
+    assert.equal(n?.event, "transaction.paid");
+    assert.equal(n?.transactionId, "TXN-1");
+    assert.equal(n?.externalReference, "AP-20260928-K7Q2M9XDPA");
+    assert.equal(n?.status, "PAID");
+    const audit = JSON.stringify(n?.audit);
+    assert.ok(audit.includes("TXN-1") && audit.includes("2026-09-28T13:35:01.000Z"));
+    assert.ok(!audit.includes("52998224725") && !audit.includes("Ana Souza") && !audit.includes("instagram"));
+  });
+
+  test("campos na raiz também são aceitos; sem evento ou transactionId, nada a processar", () => {
+    assert.equal(parseBlackCatNotification({ event: "transaction.created", transactionId: "TXN-2", status: "PENDING" })?.transactionId, "TXN-2");
+    assert.equal(parseBlackCatNotification({ transactionId: "TXN-2" }), null);
+    assert.equal(parseBlackCatNotification({ event: "transaction.paid" }), null);
+    assert.equal(parseBlackCatNotification("texto"), null);
+    assert.equal(parseBlackCatNotification(null), null);
+  });
+});
+
+describe("QR Code e rótulos", () => {
+  test("imagem do QR Code: data URI ou base64 de PNG; texto do PIX não é imagem", () => {
+    assert.equal(qrImageFrom("data:image/png;base64,iVBORw0KGgoAAAA="), "data:image/png;base64,iVBORw0KGgoAAAA=");
+    assert.equal(qrImageFrom("iVBORw0KGgoAAAA="), "data:image/png;base64,iVBORw0KGgoAAAA=");
+    assert.equal(qrImageFrom(EMV), null);
+    assert.equal(qrImageFrom("data:image/svg+xml;base64,PHN2Zz4="), null);
+    assert.equal(qrImageFrom("javascript:alert(1)"), null);
+    assert.equal(qrImageFrom(null), null);
+  });
+
+  test("QR Code desenhado a partir do copia e cola (SVG)", () => {
+    const uri = pixQrDataUri(EMV);
+    assert.match(uri, /^data:image\/svg\+xml;charset=utf-8,/);
+    const svg = decodeURIComponent(uri.split(",")[1]!);
+    assert.match(svg, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" viewBox="0 0 (\d+) \1"/);
+    assert.equal(pixQrDataUri(EMV), uri);
+  });
+
+  test("rótulos: PIX e gateways (inclusive o antigo, no histórico)", () => {
+    assert.equal(paymentMethodLabel("pix"), "PIX");
+    assert.equal(paymentMethodLabel("PIX"), "PIX");
+    assert.equal(paymentMethodLabel("credit_card"), "Cartão de crédito");
+    assert.equal(paymentMethodLabel(null), "—");
+    assert.equal(providerLabel("blackcat"), "BlackCat");
+    assert.equal(providerLabel("mercadopago"), "Mercado Pago");
   });
 });
