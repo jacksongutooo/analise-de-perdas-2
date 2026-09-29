@@ -16,15 +16,19 @@ function price(value: string | undefined): number | null {
   return cents !== null && cents > 0 ? cents : null;
 }
 
-function httpsUrl(value: string | undefined): string | null {
-  const raw = (value ?? "").trim();
-  if (!raw) return null;
+/** URL base da API do gateway: https (http só para um servidor de testes na própria máquina). */
+function apiBaseUrl(value: string | undefined, fallback: string): string {
+  const raw = (value ?? "").trim().replace(/\/+$/, "");
+  if (!raw) return fallback;
   try {
-    const url = new URL(raw.replace(/\{protocolo\}/g, "PROTOCOLO"));
-    return url.protocol === "https:" || (url.protocol === "http:" && process.env.NODE_ENV !== "production") ? raw : null;
+    const url = new URL(raw);
+    const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (url.protocol === "https:" || (url.protocol === "http:" && local)) return raw;
   } catch {
-    return null;
+    /* inválida: usa o endereço oficial */
   }
+  console.error("[env] BLACKCAT_BASE_URL inválida (use https): usando o endereço oficial da API.");
+  return fallback;
 }
 
 export const config = {
@@ -47,14 +51,15 @@ export const config = {
   isProduction: process.env.NODE_ENV === "production",
   /** Ano de referência do ComprovaBet exigido no envio (documento anual). */
   comprovabetYear: int(process.env.COMPROVABET_YEAR, 2025, 2020, 2100),
-  /** Valor da análise exibido na etapa de pagamento (opcional). */
+  /** Valor da análise, cobrado no PIX (definido só aqui, no servidor). */
   analysisPriceCents: price(process.env.ANALYSIS_PRICE),
-  /** Link de pagamento externo (opcional). "{protocolo}" é trocado pelo protocolo do caso. */
-  paymentUrl: httpsUrl(process.env.PAYMENT_URL),
-  /** Gateway de pagamento (Mercado Pago). Sem token: pagamento só na demonstração (DEMO_MODE). */
-  mercadoPago: {
-    accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN?.trim() ?? "",
-    webhookSecret: process.env.MERCADOPAGO_WEBHOOK_SECRET?.trim() ?? "",
+  /**
+   * Gateway de pagamento: BlackCat (PIX). A chave fica só no servidor (nunca em variável NEXT_PUBLIC_).
+   * Sem chave, o pagamento só existe na demonstração (DEMO_MODE).
+   */
+  blackcat: {
+    apiKey: process.env.BLACKCAT_API_KEY?.trim() ?? "",
+    baseUrl: apiBaseUrl(process.env.BLACKCAT_BASE_URL, "https://api.blackcatoficial.com/api"),
   },
 };
 
@@ -68,9 +73,4 @@ export function authSecret(): string {
     throw new Error("AUTH_SECRET ausente ou curto demais (mínimo de 32 caracteres). Configure o arquivo .env.");
   }
   return secret;
-}
-
-/** Link de pagamento do caso, quando configurado. */
-export function paymentLinkFor(protocol: string): string | null {
-  return config.paymentUrl ? config.paymentUrl.replace(/\{protocolo\}/g, encodeURIComponent(protocol)) : null;
 }

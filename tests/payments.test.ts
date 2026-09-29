@@ -238,12 +238,11 @@ describe("QR Code e rótulos", () => {
     assert.equal(pixQrDataUri(EMV), uri);
   });
 
-  test("rótulos: PIX e gateways (inclusive o antigo, no histórico)", () => {
+  test("rótulos: PIX e gateways", () => {
     assert.equal(paymentMethodLabel("pix"), "PIX");
     assert.equal(paymentMethodLabel("PIX"), "PIX");
-    assert.equal(paymentMethodLabel("credit_card"), "Cartão de crédito");
     assert.equal(paymentMethodLabel(null), "—");
     assert.equal(providerLabel("blackcat"), "BlackCat");
-    assert.equal(providerLabel("mercadopago"), "Mercado Pago");
+    assert.equal(providerLabel("demo"), "Pagamento de demonstração");
   });
 });

@@ -34,9 +34,9 @@ export default async function DashboardPage() {
 
       {!paymentAvailable() && (
         <Notice tone="warn">
-          O pagamento da análise não está configurado: sem ele, novas solicitações não podem ser concluídas.{" "}
+          O pagamento da análise (PIX pela BlackCat) não está configurado: sem ele, novas solicitações não podem ser concluídas.{" "}
           {config.analysisPriceCents === null ? "Defina ANALYSIS_PRICE e " : "Defina "}
-          MERCADOPAGO_ACCESS_TOKEN nas variáveis de ambiente.
+          BLACKCAT_API_KEY nas variáveis de ambiente.
         </Notice>
       )}
 

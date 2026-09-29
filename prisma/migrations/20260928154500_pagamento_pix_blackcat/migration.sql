@@ -1,10 +1,10 @@
--- Pagamento da análise por PIX, com a BlackCat no lugar do Mercado Pago.
--- Nenhum dado é apagado: os pagamentos antigos continuam na tabela (provedor "mercadopago"). Os status e as
--- colunas são RENOMEADOS (não recriados), então os valores já gravados são preservados:
+-- Pagamento da análise por PIX, com a BlackCat.
+-- Nenhum dado é apagado: os status e as colunas são RENOMEADOS (não recriados), então os valores já gravados são
+-- preservados:
 --   approved → paid · rejected → failed · provider_payment_id → provider_transaction_id · method → payment_method
 
--- AlterEnum: novo gateway (o valor "mercadopago" fica para o histórico)
-ALTER TYPE "payment_provider" ADD VALUE IF NOT EXISTS 'blackcat' BEFORE 'mercadopago';
+-- AlterEnum: gateway BlackCat ("demo" é o PIX simulado da demonstração)
+ALTER TYPE "payment_provider" ADD VALUE IF NOT EXISTS 'blackcat' BEFORE 'demo';
 
 -- AlterEnum: status internos equivalentes a PENDING, PAID, FAILED, CANCELLED e EXPIRED (e REFUNDED)
 ALTER TYPE "payment_attempt_status" RENAME VALUE 'approved' TO 'paid';

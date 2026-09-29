@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { PAYMENT_NOTICE, SERVICE_TERMS_CHECKBOX, contactWithinText } from "@/lib/comprovabet";
 import {
   PRE_ANALYSIS_REVIEW_MESSAGE,
@@ -35,10 +35,10 @@ import {
   type ControlLossValue,
 } from "@/lib/options";
 import { MoneyInput } from "../MoneyInput";
-import { IconAlert, IconCheck, IconDice, IconInfo, IconLayers, IconLock, IconPlus, IconSpinner, IconTrophy, IconX } from "../icons";
+import { IconAlert, IconCheck, IconCopy, IconDice, IconInfo, IconLayers, IconLock, IconPlus, IconSpinner, IconTrophy, IconX } from "../icons";
 import { Button, Field, LedgerRow, Notice, TextInput } from "../ui";
 import { ChoiceCard } from "./ChoiceCard";
-import { contactErrors, currentSituations, declaredLoss, type PaymentState, type Screen, type WizardData } from "./state";
+import { contactErrors, currentSituations, declaredLoss, type PaymentState, type PixState, type Screen, type WizardData } from "./state";
 
 type HeadingRef = RefObject<HTMLHeadingElement | null>;
 type Update = (patch: Partial<WizardData>) => void;
@@ -762,29 +762,19 @@ export function AnalysisStep({
   );
 }
 
-// ─── Pagamento da análise (antes da solicitação) ──────────────────────────
+// ─── Pagamento da análise por PIX (antes da solicitação) ─────────────────
 export type PaymentSettings = {
   /** Gateway e valor configurados. */
   available: boolean;
   priceCents: number | null;
-  /** Formas de pagamento e quem processa (ou o aviso da demonstração), abaixo do valor. */
+  /** Como o PIX é processado (ou o aviso da demonstração), abaixo do valor. */
   note: string;
 };
 
-/** Situação do pagamento: fica no topo da tela para ser vista logo na volta do checkout. */
-function PaymentStatus({
-  payment,
-  available,
-  checking,
-  onCheck,
-}: {
-  payment: PaymentState | null;
-  available: boolean;
-  checking: boolean;
-  onCheck: () => void;
-}) {
+/** Situação do pagamento fora do PIX em aberto: confirmado, indisponível ou tentativa anterior sem pagamento. */
+function PaymentStatusNotice({ payment, available }: { payment: PaymentState | null; available: boolean }) {
   const status = payment?.status ?? "none";
-  if (status === "approved") {
+  if (status === "paid") {
     return (
       <Notice tone="ok">
         <span className="flex items-start gap-2">
@@ -810,23 +800,169 @@ function PaymentStatus({
       </Notice>
     );
   }
-  if (status === "pending") {
-    return (
-      <Notice tone="info">
-        <p>
-          <strong className="font-semibold">Aguardando a confirmação do pagamento.</strong> Se você já pagou, a confirmação pode levar alguns
-          instantes. Se ainda não concluiu, toque em Retomar pagamento.
-        </p>
-        <Button variant="secondary" size="sm" className="mt-3" onClick={onCheck} loading={checking}>
-          Verificar pagamento
-        </Button>
-      </Notice>
-    );
-  }
-  if (status === "rejected") return <Notice tone="danger">O pagamento não foi aprovado. Você pode tentar de novo com Pix ou com outro cartão.</Notice>;
+  if (status === "expired") return <Notice tone="warn">O PIX anterior expirou sem pagamento. Gere um novo PIX para pagar.</Notice>;
+  if (status === "failed") return <Notice tone="danger">Não foi possível concluir o PIX anterior. Gere um novo PIX para tentar de novo.</Notice>;
+  if (status === "cancelled") return <Notice tone="warn">O PIX anterior foi cancelado. Gere um novo PIX para pagar.</Notice>;
   if (status === "refunded") return <Notice tone="warn">O pagamento anterior foi estornado. Para solicitar a análise, faça um novo pagamento.</Notice>;
-  if (status === "cancelled") return <Notice tone="warn">O pagamento anterior não foi concluído. Você pode tentar novamente.</Notice>;
   return null;
+}
+
+/** Copia o texto: área de transferência do navegador, com alternativa para navegadores antigos. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    return ok;
+  }
+}
+
+/** PIX em aberto: QR Code, copia e cola, status e validade. A tela é atualizada sozinha com a confirmação. */
+function PixPanel({
+  pix,
+  demo,
+  onSimulate,
+  simulating,
+}: {
+  pix: PixState;
+  demo: boolean;
+  onSimulate: (outcome: "paid" | "expired") => void;
+  simulating: boolean;
+}) {
+  const [copied, setCopied] = useState<"ok" | "manual" | null>(null);
+  const codeRef = useRef<HTMLParagraphElement | null>(null);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => void (timer.current && window.clearTimeout(timer.current)), []);
+
+  async function copy() {
+    const ok = await copyText(pix.copyPaste);
+    if (!ok && codeRef.current) {
+      // Sem acesso à área de transferência: deixa o código selecionado para copiar manualmente.
+      const range = document.createRange();
+      range.selectNodeContents(codeRef.current);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    }
+    setCopied(ok ? "ok" : "manual");
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(null), 4000);
+  }
+
+  return (
+    <section aria-labelledby="pix-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
+      <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
+        <div>
+          <h2 id="pix-title" className="text-base font-semibold text-ink">
+            Pagamento via PIX
+          </h2>
+          <p className="mt-1 inline-flex items-center gap-2 rounded-full bg-warn-50 px-2.5 py-0.5 text-xs font-semibold text-warn-700">
+            <span className="size-1.5 animate-pulse rounded-full bg-warn-700" aria-hidden />
+            Aguardando pagamento
+          </p>
+        </div>
+        <p className="text-right">
+          <span className="block text-xs text-muted">Valor</span>
+          <span className="text-xl font-semibold tabular-nums text-ink" data-testid="pix-amount">
+            {formatBRL(pix.amountCents)}
+          </span>
+        </p>
+      </header>
+
+      <div className="grid gap-5 p-5 sm:grid-cols-[12.5rem_1fr] sm:items-start">
+        <figure className="order-2 mx-auto w-full max-w-[13rem] sm:order-1 sm:max-w-none">
+          <img
+            src={pix.qrCode}
+            alt="QR Code do PIX para pagamento da análise"
+            width={200}
+            height={200}
+            className="aspect-square w-full rounded-xl border border-line bg-white p-2"
+          />
+          <figcaption className="mt-2 text-center text-xs text-muted">Escaneie com o app do seu banco</figcaption>
+        </figure>
+
+        <div className="order-1 min-w-0 sm:order-2">
+          <p className="text-sm font-medium text-ink" id="pix-code-label">
+            Código PIX copia e cola
+          </p>
+          <p
+            ref={codeRef}
+            aria-labelledby="pix-code-label"
+            data-testid="pix-copy-paste"
+            className="mt-2 max-h-[5.5rem] select-all overflow-y-auto break-all rounded-xl border border-line bg-paper px-3 py-2.5 font-mono text-xs leading-relaxed text-ink-soft"
+          >
+            {pix.copyPaste}
+          </p>
+          <Button className="mt-3 w-full" variant={copied === "ok" ? "secondary" : "primary"} onClick={() => void copy()}>
+            {copied === "ok" ? <IconCheck size={17} strokeWidth={2.5} /> : <IconCopy size={17} />}
+            {copied === "ok" ? "Código PIX copiado" : "Copiar código PIX"}
+          </Button>
+          <p className="mt-2 min-h-5 text-xs text-muted" aria-live="polite">
+            {copied === "ok"
+              ? "Código PIX copiado. Cole no app do seu banco, na opção PIX copia e cola."
+              : copied === "manual"
+                ? "Não foi possível copiar automaticamente: o código ficou selecionado para você copiar."
+                : ""}
+          </p>
+          <ol className="mt-2 space-y-1 text-sm leading-relaxed text-ink-soft">
+            <li>1. Abra o app do seu banco e escolha pagar com PIX.</li>
+            <li>2. Escaneie o QR Code ou cole o código.</li>
+            <li>3. Confirme o pagamento: esta tela é atualizada sozinha.</li>
+          </ol>
+        </div>
+      </div>
+
+      <footer className="border-t border-line bg-paper/60 px-5 py-4">
+        <p className="flex items-center gap-2 text-sm font-medium text-ink" role="status">
+          <IconSpinner size={16} className="animate-spin text-navy-700" />
+          Aguardando confirmação do pagamento
+        </p>
+        <dl className="mt-2 grid gap-1 text-xs text-muted">
+          {pix.expiresAt && (
+            <div>
+              <dt className="inline">Válido até </dt>
+              <dd className="inline tabular-nums">{formatDateTime(pix.expiresAt)}</dd>
+            </div>
+          )}
+          <div className="min-w-0">
+            <dt className="inline">ID da transação: </dt>
+            <dd className="inline break-all font-mono" data-testid="pix-transaction">
+              {pix.transactionId}
+            </dd>
+          </div>
+        </dl>
+      </footer>
+
+      {demo && (
+        <div className="border-t border-dashed border-warn-700/30 bg-warn-50 px-5 py-4 text-sm text-warn-700">
+          <p>
+            <strong>Demonstração:</strong> este PIX é fictício e nenhum valor é cobrado. Simule o resultado:
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => onSimulate("paid")} loading={simulating}>
+              Simular pagamento confirmado
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => onSimulate("expired")} disabled={simulating}>
+              Simular PIX expirado
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function PaymentStep({
@@ -835,27 +971,29 @@ export function PaymentStep({
   headingRef,
   settings,
   payment,
-  checking,
   showErrors,
-  onCheck,
   analysis,
   reviewDays,
+  onSimulate,
+  simulating,
 }: {
   data: WizardData;
   update: Update;
   headingRef: HeadingRef;
   settings: PaymentSettings;
   payment: PaymentState | null;
-  checking: boolean;
   showErrors: boolean;
-  onCheck: () => void;
   /** Resultado da pré-análise automática do ComprovaBet. */
   analysis: PreAnalysisStatus | null;
   reviewDays: number;
+  onSimulate: (outcome: "paid" | "expired") => void;
+  simulating: boolean;
 }) {
-  const paid = payment?.status === "approved";
-  const accepted = paid || data.termsAccepted;
+  const paid = payment?.status === "paid";
+  const pix = !paid && payment?.status === "pending" ? payment.pix : null;
+  const accepted = paid || Boolean(pix) || data.termsAccepted;
   const missingAccept = showErrors && !accepted;
+  const retry = payment && ["expired", "failed", "cancelled", "refunded"].includes(payment.status);
   return (
     <>
       <StepHeading
@@ -865,15 +1003,17 @@ export function PaymentStep({
         subtitle={
           paid
             ? "Pagamento confirmado. Agora é só solicitar a análise."
-            : "Confira o valor, leia o aviso e marque o aceite. Depois da confirmação do pagamento, o botão Solicitar análise é liberado."
+            : pix
+              ? "Pague o PIX pelo app do seu banco. A confirmação é automática e esta tela é atualizada sozinha."
+              : "Confira o valor, leia o aviso e marque o aceite. Depois, gere o PIX e pague pelo app do seu banco."
         }
       />
 
       <div className="mb-5 empty:mb-0" aria-live="polite">
-        <PaymentStatus payment={payment} available={settings.available} checking={checking} onCheck={onCheck} />
+        {!pix && <PaymentStatusNotice payment={payment} available={settings.available} />}
       </div>
 
-      {analysis && analysis !== "blocked" && (
+      {analysis && analysis !== "blocked" && !pix && (
         <p
           className={cx(
             "mb-4 flex items-start gap-2 rounded-xl px-4 py-3 text-sm font-medium",
@@ -891,52 +1031,62 @@ export function PaymentStep({
         </p>
       )}
 
-      <div className="rounded-2xl border border-line bg-surface px-5 py-4 shadow-soft">
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="text-sm text-ink-soft">Valor da análise</span>
-          <span className="text-2xl font-semibold tabular-nums text-ink">
-            {settings.priceCents !== null ? formatBRL(settings.priceCents) : "—"}
-          </span>
+      {pix ? (
+        <PixPanel pix={pix} demo={Boolean(payment?.demo)} onSimulate={onSimulate} simulating={simulating} />
+      ) : (
+        <div className="rounded-2xl border border-line bg-surface px-5 py-4 shadow-soft">
+          <div className="flex items-baseline justify-between gap-4">
+            <span>
+              <span className="block text-base font-semibold text-ink">Pagamento via PIX</span>
+              <span className="text-sm text-ink-soft">{paid ? "Valor pago" : "Valor da análise"}</span>
+            </span>
+            <span className="text-2xl font-semibold tabular-nums text-ink" data-testid="analysis-price">
+              {settings.priceCents !== null ? formatBRL(settings.priceCents) : "—"}
+            </span>
+          </div>
+          {!paid && (
+            <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-muted">
+              <IconLock size={14} className="mt-px shrink-0" />
+              <span>{settings.note}</span>
+            </p>
+          )}
         </div>
-        <p className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-muted">
-          <IconLock size={14} className="mt-px shrink-0" />
-          <span>{settings.note}</span>
-        </p>
-      </div>
+      )}
 
-      <section className="mt-4 rounded-2xl border border-navy-100 bg-navy-50 p-5" aria-labelledby="payment-notice-title">
-        <p id="payment-notice-title" className="flex items-center gap-2 text-base font-semibold text-navy-900">
-          <IconInfo size={19} /> Importante
-        </p>
-        <p className="mt-2 text-[0.95rem] leading-relaxed text-ink">{PAYMENT_NOTICE}</p>
-      </section>
+      {!pix && !paid && (
+        <>
+          <section className="mt-4 rounded-2xl border border-navy-100 bg-navy-50 p-5" aria-labelledby="payment-notice-title">
+            <p id="payment-notice-title" className="flex items-center gap-2 text-base font-semibold text-navy-900">
+              <IconInfo size={19} /> Importante
+            </p>
+            <p className="mt-2 text-[0.95rem] leading-relaxed text-ink">{PAYMENT_NOTICE}</p>
+          </section>
 
-      <label
-        className={cx(
-          "mt-4 flex items-start gap-3 rounded-2xl border p-4 transition-colors",
-          paid
-            ? "border-line bg-surface"
-            : accepted
-              ? "cursor-pointer border-navy-900 bg-navy-50 shadow-[inset_0_0_0_1px_var(--color-navy-900)]"
-              : missingAccept
-                ? "cursor-pointer border-danger-700/40 bg-danger-50"
-                : "cursor-pointer border-line-strong bg-surface",
-        )}
-      >
-        <input
-          type="checkbox"
-          checked={accepted}
-          disabled={paid}
-          onChange={(e) => update({ termsAccepted: e.target.checked })}
-          aria-invalid={missingAccept || undefined}
-          className="mt-0.5 size-5 shrink-0 accent-navy-900"
-        />
-        <span className="text-[0.95rem] leading-relaxed text-ink">{SERVICE_TERMS_CHECKBOX}</span>
-      </label>
-      <p className="mt-2 text-xs leading-relaxed text-muted">
-        {payment?.termsAcceptedAt
-          ? `Aceite registrado em ${formatDateTime(payment.termsAcceptedAt)}. `
-          : "O aceite fica registrado com data e hora ao abrir o pagamento. "}
+          <label
+            className={cx(
+              "mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition-colors",
+              accepted
+                ? "border-navy-900 bg-navy-50 shadow-[inset_0_0_0_1px_var(--color-navy-900)]"
+                : missingAccept
+                  ? "border-danger-700/40 bg-danger-50"
+                  : "border-line-strong bg-surface",
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={accepted}
+              onChange={(e) => update({ termsAccepted: e.target.checked })}
+              aria-invalid={missingAccept || undefined}
+              className="mt-0.5 size-5 shrink-0 accent-navy-900"
+            />
+            <span className="text-[0.95rem] leading-relaxed text-ink">{SERVICE_TERMS_CHECKBOX}</span>
+          </label>
+        </>
+      )}
+      <p className="mt-3 text-xs leading-relaxed text-muted">
+        {payment?.termsAcceptedAt && (pix || paid || !retry)
+          ? `Condições aceitas em ${formatDateTime(payment.termsAcceptedAt)}. `
+          : "O aceite fica registrado com data e hora ao gerar o PIX. "}
         Leia as condições completas nos{" "}
         <Link href="/termos" target="_blank" className="font-medium text-navy-700 underline underline-offset-2">
           Termos de Uso

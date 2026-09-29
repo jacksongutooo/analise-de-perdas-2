@@ -1,22 +1,27 @@
 import { prisma } from "@/lib/db";
 import { getStorage } from "@/lib/storage";
 
-/** Por quanto tempo um pagamento aberto (ainda sem resposta do gateway) impede apagar o rascunho. */
+/** Por quanto tempo um pagamento aberto sem data de vencimento (ainda sem resposta do gateway) impede apagar o rascunho. */
 const OPEN_PAYMENT_HOURS = 24;
 
 /**
- * Pagamento que ainda pode concluir a solicitação: aprovado, ou aberto há pouco (o cliente pode pagar a qualquer
- * momento, e a confirmação cria o caso com as respostas guardadas no rascunho).
+ * Pagamento que ainda pode concluir a solicitação: confirmado, ou PIX em aberto e dentro do prazo (o cliente pode
+ * pagar a qualquer momento, e a confirmação cria o caso com as respostas guardadas no rascunho).
  */
-export async function draftPaymentBlock(draftId: string): Promise<"approved" | "pending" | null> {
+export async function draftPaymentBlock(draftId: string): Promise<"paid" | "pending" | null> {
+  const now = new Date();
   const payments = await prisma.payment.findMany({
     where: {
       draftId,
-      OR: [{ status: "approved" }, { status: "pending", createdAt: { gte: new Date(Date.now() - OPEN_PAYMENT_HOURS * 3_600_000) } }],
+      OR: [
+        { status: "paid" },
+        { status: "pending", pixExpiresAt: { gt: now } },
+        { status: "pending", pixExpiresAt: null, createdAt: { gte: new Date(now.getTime() - OPEN_PAYMENT_HOURS * 3_600_000) } },
+      ],
     },
     select: { status: true },
   });
-  if (payments.some((p) => p.status === "approved")) return "approved";
+  if (payments.some((p) => p.status === "paid")) return "paid";
   return payments.length ? "pending" : null;
 }
 

@@ -377,7 +377,7 @@ export default async function CasePage({
   const cpfMasked = c.user.cpf ? maskCpf(c.user.cpf) : "—";
   const cpfLocked = CPF_LOCKED_STATUSES.includes(status) || comprovabetDocs.some((d) => d.status === "valid");
   const agreement = c.agreements[0] ?? null;
-  const approvedPayment = c.payments.find((p) => p.status === "approved") ?? null;
+  const approvedPayment = c.payments.find((p) => p.status === "paid") ?? null;
   const preAnalysis = parsePreAnalysis(c.preAnalysis);
   const canStart = status === "payment_confirmed" || (legacy && (status === "submitted" || status === "documents_received"));
   const latestNote = c.notes[0] ?? null;
@@ -506,7 +506,7 @@ export default async function CasePage({
             <Badge tone={PAYMENT_STATUS_TONE[payment]}>{PAYMENT_STATUS_LABEL[payment]}</Badge>
             {payment === "confirmed" && approvedPayment && (
               <span className="mt-1 block text-xs text-muted">
-                {providerLabel(approvedPayment.provider)} · {paymentMethodLabel(approvedPayment.method)}
+                {providerLabel(approvedPayment.provider)} · {paymentMethodLabel(approvedPayment.paymentMethod)}
                 {approvedPayment.paidAt && ` · ${formatDateTime(approvedPayment.paidAt)}`}
               </span>
             )}
@@ -1085,13 +1085,14 @@ export default async function CasePage({
                     <li key={p.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-4 py-3 text-sm">
                       <span className="min-w-0">
                         <span className="font-medium text-ink">
-                          {providerLabel(p.provider)} · {paymentMethodLabel(p.method)}
+                          {providerLabel(p.provider)} · {paymentMethodLabel(p.paymentMethod)}
                         </span>
                         <span className="block text-xs text-muted">
                           {formatDateTime(p.paidAt ?? p.createdAt)}
-                          {p.providerPaymentId ? ` · transação ${p.providerPaymentId}` : ""}
-                          {p.statusDetail && p.status !== "approved" ? ` · ${p.statusDetail}` : ""}
+                          {p.providerTransactionId ? ` · transação ${p.providerTransactionId}` : ""}
+                          {p.externalReference ? ` · ref. ${p.externalReference}` : ""}
                         </span>
+                        {p.statusDetail && <span className="block text-xs text-muted">{p.statusDetail}</span>}
                       </span>
                       <span className="flex items-center gap-3">
                         <span className="tabular-nums text-ink">{formatBRL(decimalToCents(p.amount) ?? 0)}</span>

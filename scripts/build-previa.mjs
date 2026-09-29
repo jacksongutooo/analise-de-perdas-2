@@ -1,6 +1,6 @@
 // Gera previa/index.html: a prévia navegável do site, sem servidor, com o código atual do projeto.
 // O código do servidor (páginas, ações e rotas /api) roda no navegador sobre um banco simulado
-// (previa/src/shims/fake-prisma.ts) com os mesmos dados fictícios do seed (src/lib/demo/seed.ts).
+// (previa/src/shims/fake-prisma.ts) com os mesmos dados fictícios do seed (lib/demo/seed.ts).
 // Uso: npm run previa
 import { build } from "esbuild";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -10,8 +10,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const src = path.join(root, "src");
-const appDir = path.join(src, "app");
+const appDir = path.join(root, "app");
+const libDir = path.join(root, "lib");
+// Código do site (sem pasta src/): páginas, componentes e bibliotecas ficam na raiz do projeto.
+const siteDirs = ["app", "components", "lib"].map((dir) => path.join(root, dir) + path.sep);
+const isSiteFile = (file) => siteDirs.some((dir) => file.startsWith(dir));
 const previaDir = path.join(root, "previa");
 const shim = (name) => path.join(previaDir, "src", "shims", name);
 const require = createRequire(import.meta.url);
@@ -89,11 +92,11 @@ const MODULE_SHIMS = {
   "node:crypto": shim("crypto.ts"),
   crypto: shim("crypto.ts"),
 };
-const readersFile = path.join(src, "lib", "extraction", "readers.ts");
+const readersFile = path.join(libDir, "extraction", "readers.ts");
 const FILE_SHIMS = {
-  [path.join(src, "lib", "db.ts")]: shim("db.ts"),
-  [path.join(src, "lib", "storage", "local.ts")]: shim("storage-local.ts"),
-  [path.join(src, "lib", "storage", "s3.ts")]: shim("storage-s3.ts"),
+  [path.join(libDir, "db.ts")]: shim("db.ts"),
+  [path.join(libDir, "storage", "local.ts")]: shim("storage-local.ts"),
+  [path.join(libDir, "storage", "s3.ts")]: shim("storage-s3.ts"),
   [readersFile]: shim("readers.ts"),
 };
 
@@ -146,11 +149,11 @@ const previaPlugin = {
     b.onResolve({ filter: /^(@\/|\.\.?\/|\/)/ }, (args) => {
       if (args.namespace === "previa-virtual" && !args.path.startsWith("/")) return undefined;
       const target = args.path.startsWith("@/")
-        ? resolveFile(path.join(src, args.path.slice(2)))
+        ? resolveFile(path.join(root, args.path.slice(2)))
         : resolveFile(path.isAbsolute(args.path) ? args.path : path.resolve(args.resolveDir, args.path));
       if (!target) return undefined;
       if (FILE_SHIMS[target] && !(target === readersFile && args.importer === FILE_SHIMS[readersFile])) return { path: FILE_SHIMS[target] };
-      if (target.startsWith(src) && args.namespace !== "previa-action" && directiveOf(target) === "use server") {
+      if (isSiteFile(target) && args.namespace !== "previa-action" && directiveOf(target) === "use server") {
         return { path: target, namespace: "previa-action" };
       }
       return { path: target };
@@ -168,7 +171,7 @@ const previaPlugin = {
 
     // Componentes cliente: marcados para o renderizador não executá-los como componentes de servidor.
     b.onLoad({ filter: /\.(tsx|ts)$/ }, (args) => {
-      if (!args.path.startsWith(src) || directiveOf(args.path) !== "use client") return undefined;
+      if (!isSiteFile(args.path) || directiveOf(args.path) !== "use client") return undefined;
       let code = readFileSync(args.path, "utf8");
       code = code.replace(/export\s+default\s+function\s*\(/, "export default function __DefaultExport(");
       const names = exportedNames(code);

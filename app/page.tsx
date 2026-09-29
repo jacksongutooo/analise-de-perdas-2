@@ -1,11 +1,14 @@
 import { IconFile, IconLock, IconShield } from "@/components/icons";
 import { SiteFooter, SiteHeader } from "@/components/site";
 import { LinkButton } from "@/components/ui";
-import { TRUST_LINE } from "@/lib/comprovabet";
+import { TRUST_LINE, requirementsText } from "@/lib/comprovabet";
 import { config } from "@/lib/env";
 import { formatBRL } from "@/lib/format";
 import { NO_PASSWORD_NOTICE } from "@/lib/options";
 import { analysisPrice } from "@/lib/payments";
+
+// O valor da análise mostrado aqui vem da configuração do servidor (o mesmo cobrado no PIX).
+export const dynamic = "force-dynamic";
 
 export default function HomePage() {
   const year = config.comprovabetYear;
@@ -15,7 +18,7 @@ export default function HomePage() {
     { title: `ComprovaBet ${year}`, hint: "Documento anual em seu nome, de preferência em PDF" },
     { title: "E-mail e WhatsApp", hint: "Para acompanhar o caso e receber orientações" },
     {
-      title: "Pix ou cartão de crédito",
+      title: "Pagamento via PIX",
       hint:
         price && !price.example
           ? `A análise custa ${formatBRL(price.cents)} e é paga no fim do formulário, antes da solicitação`
@@ -38,7 +41,7 @@ export default function HomePage() {
           </LinkButton>
           <p className="mt-5 text-sm font-medium text-ink-soft">100% online • Análise documental • Acompanhamento em todas as etapas</p>
           <p className="mt-3 max-w-[52ch] text-sm leading-relaxed text-muted">
-            Cada caso é analisado individualmente pela nossa equipe.
+            Cada caso é analisado individualmente pela nossa equipe. {requirementsText(year)}
           </p>
         </section>
 

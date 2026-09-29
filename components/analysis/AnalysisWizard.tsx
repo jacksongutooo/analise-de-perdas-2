@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PreAnalysis } from "@/lib/documents/pre-analysis";
 import type { BetTypeValue } from "@/lib/options";
+import { PIX_ERROR_MESSAGE } from "@/lib/payments/types";
 import { IconCheck, IconX } from "../icons";
 import { Logo } from "../site";
 import { Button } from "../ui";
@@ -51,12 +52,11 @@ import {
 
 export type WizardSettings = { maxUploadMb: number; reviewDays: number; comprovabetYear: number; payment: PaymentSettings };
 
-/** O checkout só pode levar a um endereço seguro (https) ou a uma página deste site. */
-function safeCheckoutUrl(url: string): boolean {
-  return /^https:\/\//i.test(url) || (url.startsWith("/") && !url.startsWith("//"));
-}
+/** Enquanto o PIX aguarda pagamento, a tela pergunta ao nosso servidor a cada 4 s (por até 30 minutos). */
+const PAYMENT_POLL_MS = 4000;
+const PAYMENT_POLL_ROUNDS = 450;
 
-export function AnalysisWizard({ settings, returning = false }: { settings: WizardSettings; returning?: boolean }) {
+export function AnalysisWizard({ settings }: { settings: WizardSettings }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [screen, setScreen] = useState<Screen>("type");
@@ -73,12 +73,12 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
   const [filesLoading, setFilesLoading] = useState(false);
   const [savingCpf, setSavingCpf] = useState(false);
   const [cpfServerError, setCpfServerError] = useState<string | null>(null);
-  // Pagamento da análise (antes da solicitação).
+  // Pagamento da análise por PIX (antes da solicitação).
   const [payment, setPayment] = useState<PaymentState | null>(null);
   const [paymentLoaded, setPaymentLoaded] = useState(false);
   const [paymentChecking, setPaymentChecking] = useState(false);
   const [paying, setPaying] = useState(false);
-  const [lostProgress, setLostProgress] = useState(false);
+  const [simulating, setSimulating] = useState(false);
   // Pré-análise automática do ComprovaBet (tela logo depois do envio do documento).
   const [analysisResult, setAnalysisResult] = useState<PreAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -93,8 +93,8 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
   const advanceTimer = useRef<number | null>(null);
   const finished = useRef(false);
   const latest = useRef<{ screen: Screen; data: WizardData; draft: DraftCreds | null } | null>(null);
-  /** A página abriu na volta do checkout (lido só na abertura). */
-  const returnedFromCheckout = useRef(returning);
+  /** Saiu da tela de pagamento com um PIX em aberto: ao voltar, as respostas são gravadas de novo (o mesmo PIX segue valendo). */
+  const leftPixOpen = useRef(false);
 
   const setDraft = useCallback((creds: DraftCreds | null) => {
     draftRef.current = creds;
@@ -110,18 +110,11 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
       restoredDraftId.current = saved.draft?.id ?? null;
       setScreen(resumeScreen(saved.screen, saved.data));
       setSavedAt(saved.savedAt);
-      // Na volta do checkout, a própria tela de pagamento mostra a situação: sem o aviso de retomada.
-      setResumed(saved.screen !== "type" && !returnedFromCheckout.current);
+      // Na tela de pagamento, a própria situação do PIX aparece: sem o aviso de retomada.
+      setResumed(saved.screen !== "type" && saved.screen !== "payment");
     }
-    // Voltou do pagamento em outro navegador (ou sem o preenchimento salvo): não há como ligar ao pedido aqui.
-    if (returnedFromCheckout.current && !saved?.draft) setLostProgress(true);
     setReady(true);
   }, [setDraft]);
-
-  // Tira da barra de endereços os parâmetros da volta do checkout.
-  useEffect(() => {
-    if (returning) router.replace("/analise", { scroll: false });
-  }, [returning, router]);
 
   // Salvamento automático a cada alteração.
   useEffect(() => {
@@ -153,9 +146,12 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     setNotice("Sua sessão de envio anterior expirou. Confira seu CPF e envie o ComprovaBet novamente.");
   }, [setDraft]);
 
-  /** Consulta a situação do pagamento no servidor (que confere com o gateway se a confirmação ainda não chegou). */
+  /**
+   * Pergunta ao nosso servidor se o pagamento já foi confirmado (resposta lida do banco; a confirmação chega pela
+   * notificação da BlackCat). manual: botão "Verificar pagamento".
+   */
   const refreshPayment = useCallback(
-    async (opts: { quiet?: boolean } = {}): Promise<PaymentState | null> => {
+    async (opts: { quiet?: boolean; manual?: boolean } = {}): Promise<PaymentState | null> => {
       const creds = draftRef.current;
       if (!creds) {
         setPaymentLoaded(true);
@@ -163,7 +159,7 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
       }
       if (!opts.quiet) setPaymentChecking(true);
       try {
-        const res = await fetch("/api/draft/payment", { headers: draftHeaders(creds), cache: "no-store" });
+        const res = await fetch(`/api/draft/payment${opts.manual ? "?verificar=1" : ""}`, { headers: draftHeaders(creds), cache: "no-store" });
         if (draftRef.current?.id !== creds.id) return null;
         if (res.status === 401) {
           invalidateDraft();
@@ -250,7 +246,8 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
   const getDraft = useCallback(() => draftRef.current, []);
 
   const onPaymentScreen = screen === "payment";
-  const paid = payment?.status === "approved";
+  const paid = payment?.status === "paid";
+  const pixOpen = !paid && payment?.status === "pending" && Boolean(payment.pix);
   const paymentStarted = paid || payment?.status === "pending";
 
   // Situação do pagamento: ao retomar um rascunho salvo e sempre que a tela de pagamento abre.
@@ -264,7 +261,7 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     void refreshPayment();
   }, [ready, draftId, onPaymentScreen, refreshPayment]);
 
-  // Enquanto o pagamento aguarda confirmação, consulta de novo a cada poucos segundos (por até 2 minutos).
+  // Enquanto o PIX aguarda pagamento, pergunta ao nosso servidor a cada 4 segundos (atualização automática da tela).
   const paymentStatus = payment?.status ?? null;
   useEffect(() => {
     if (!onPaymentScreen || paymentStatus !== "pending") return;
@@ -272,9 +269,9 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       rounds += 1;
-      if (rounds > 30) window.clearInterval(timer);
+      if (rounds > PAYMENT_POLL_ROUNDS) window.clearInterval(timer);
       else void refreshPayment({ quiet: true });
-    }, 4000);
+    }, PAYMENT_POLL_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void refreshPayment({ quiet: true });
     };
@@ -285,7 +282,15 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     };
   }, [onPaymentScreen, paymentStatus, refreshPayment]);
 
-  // Voltou do checkout pelo botão "voltar" do navegador (página restaurada da memória).
+  // O PIX em aberto saiu da tela (pago, vencido ou cancelado): volta ao topo, onde fica o aviso da nova situação.
+  const previousStatus = useRef<string | null>(null);
+  useEffect(() => {
+    const before = previousStatus.current;
+    previousStatus.current = paymentStatus;
+    if (onPaymentScreen && before === "pending" && paymentStatus && paymentStatus !== "pending") window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [onPaymentScreen, paymentStatus]);
+
+  // Página restaurada da memória pelo botão "voltar" do navegador: confere de novo o pagamento.
   useEffect(() => {
     const onShow = (event: PageTransitionEvent) => {
       if (!event.persisted) return;
@@ -302,7 +307,7 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
   const sentComprovaBet = useMemo(() => comprovabetFiles(files), [files]);
   const comprovabetIds = useMemo(() => sentComprovaBet.map((f) => f.id), [sentComprovaBet]);
   const year = settings.comprovabetYear;
-  // Resultado da pré-análise que vale para os arquivos atuais (ou o gravado no servidor, na volta do checkout).
+  // Resultado da pré-análise que vale para os arquivos atuais (ou o gravado no servidor, ao retomar o pagamento).
   const freshAnalysis = analysisResult && sameDocuments(analysisResult.documentIds, comprovabetIds) ? analysisResult : null;
   const analysisCtx = freshAnalysis
     ? { status: freshAnalysis.status, message: freshAnalysis.message }
@@ -329,6 +334,16 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
   useEffect(() => {
     if (paid && screen !== "payment") goTo("payment");
   }, [paid, screen, goTo]);
+
+  // De volta à tela de pagamento depois de rever as respostas com um PIX em aberto: grava as respostas de novo
+  // no servidor, que devolve o mesmo PIX (nunca gera outra cobrança nesse caso).
+  const resyncPixRef = useRef<() => void>(() => undefined);
+  resyncPixRef.current = () => void generatePix({ quiet: true, reuseOnly: true });
+  useEffect(() => {
+    if (!ready || screen !== "payment" || !leftPixOpen.current) return;
+    leftPixOpen.current = false;
+    resyncPixRef.current();
+  }, [ready, screen]);
 
   // Ao abrir a tela da pré-análise: refaz a conferência (ou mostra o resultado já obtido para os mesmos arquivos).
   const runAnalysisRef = useRef<() => void>(() => undefined);
@@ -442,10 +457,13 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     }
   }
 
-  /** Abre o pagamento: grava o aceite e as respostas no servidor e segue para o checkout. */
-  async function pay() {
+  /**
+   * Gera o PIX: grava o aceite e as respostas no servidor, que cria a cobrança (valor definido no servidor) e
+   * devolve o QR Code e o copia e cola. Com um PIX já em aberto, o servidor devolve o mesmo (sem nova cobrança).
+   */
+  async function generatePix(opts: { quiet?: boolean; reuseOnly?: boolean } = {}) {
     if (paying || !settings.payment.available) return;
-    if (!data.termsAccepted) {
+    if (!data.termsAccepted && !pixOpen) {
       setAttempted(true);
       setError(TERMS_REQUIRED_MESSAGE);
       return;
@@ -453,32 +471,49 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     const creds = answersComplete();
     if (!creds) return;
     setPaying(true);
-    setError(null);
-    let leaving = false;
+    if (!opts.quiet) setError(null);
     try {
-      const res = await fetch("/api/draft/payment", {
+      const res = await fetch("/api/payments/blackcat/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...draftHeaders(creds) },
-        body: JSON.stringify({ accept: true, answers: buildPayload(data) }),
+        body: JSON.stringify({ accept: true, answers: buildPayload(data), reuseOnly: opts.reuseOnly === true }),
       });
-      const body = (await res.json().catch(() => ({}))) as { checkoutUrl?: string; alreadyPaid?: boolean; error?: string; field?: string };
+      const body = (await res.json().catch(() => ({}))) as { payment?: PaymentState; alreadyPaid?: boolean; error?: string; field?: string };
       if (res.ok && body.alreadyPaid) {
         await refreshPayment();
         return;
       }
-      if (res.ok && body.checkoutUrl && safeCheckoutUrl(body.checkoutUrl)) {
-        leaving = true;
-        // Garante a volta para esta tela depois do checkout.
-        saveProgress({ v: 1, screen: "payment", data, draft: creds, savedAt: Date.now() });
-        if (body.checkoutUrl.startsWith("/")) router.push(body.checkoutUrl);
-        else window.location.assign(body.checkoutUrl);
+      if (res.ok && body.payment) {
+        setPayment(body.payment);
+        setPaymentLoaded(true);
+        if (!data.termsAccepted) update({ termsAccepted: true });
+        if (!opts.quiet) window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
-      showServerError(res.status, body, "Não foi possível abrir o pagamento agora. Tente novamente.");
+      showServerError(res.status, body, PIX_ERROR_MESSAGE);
     } catch {
       setError("Sem conexão. Verifique sua internet e tente novamente.");
     } finally {
-      if (!leaving) setPaying(false);
+      setPaying(false);
+    }
+  }
+
+  /** Demonstração: simula a confirmação (ou o vencimento) do PIX. */
+  async function simulateDemo(outcome: "paid" | "expired") {
+    const creds = draftRef.current;
+    if (!creds || simulating) return;
+    setSimulating(true);
+    try {
+      await fetch("/api/payments/demo/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...draftHeaders(creds) },
+        body: JSON.stringify({ outcome }),
+      });
+      await refreshPayment({ quiet: true });
+    } catch {
+      setError("Sem conexão. Verifique sua internet e tente novamente.");
+    } finally {
+      setSimulating(false);
     }
   }
 
@@ -556,7 +591,8 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
     if (filesLoading && screen === "documents") return;
     if (screen === "payment") {
       if (paid) void submit();
-      else void pay();
+      else if (pixOpen) void refreshPayment({ manual: true });
+      else void generatePix();
       return;
     }
     if (screen === "analysis") {
@@ -598,6 +634,7 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
 
   function back() {
     if (paid) return;
+    if (screen === "payment" && pixOpen) leftPixOpen.current = true;
     const previous = SCREENS[index - 1];
     if (previous) goTo(previous.id);
     else router.push("/");
@@ -695,11 +732,11 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
             {...common}
             settings={settings.payment}
             payment={payment}
-            checking={paymentChecking}
             showErrors={attempted}
-            onCheck={() => void refreshPayment()}
             analysis={analysisCtx?.status ?? null}
             reviewDays={settings.reviewDays}
+            onSimulate={(outcome) => void simulateDemo(outcome)}
+            simulating={simulating}
           />
         );
     }
@@ -718,9 +755,13 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
       : screen === "payment"
         ? paid
           ? "Solicitar análise"
-          : payment?.status === "pending"
-            ? "Retomar pagamento"
-            : "Pagar a análise"
+          : paying
+            ? "Gerando PIX…"
+            : pixOpen
+              ? "Verificar pagamento"
+              : payment && payment.status !== "none"
+                ? "Gerar novo PIX"
+                : "Gerar PIX"
         : "Continuar";
 
   const stepLabel = meta.step ? `Etapa ${meta.step} de ${TOTAL_STEPS}` : meta.label;
@@ -770,12 +811,6 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
           </div>
         ) : (
           <>
-            {lostProgress && (
-              <div className="mb-6 rounded-2xl border border-line bg-surface px-4 py-3 text-sm leading-relaxed text-ink-soft" role="status">
-                Voltou do pagamento? Não encontramos o seu preenchimento neste navegador. Se o pagamento foi aprovado, a solicitação já está
-                registrada: abra esta página no mesmo aparelho e navegador em que preencheu o formulário para ver o protocolo.
-              </div>
-            )}
             {resumed && !paid && (
               <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-sm">
                 <span className="text-ink-soft">Continuando de onde você parou.</span>
@@ -815,7 +850,7 @@ export function AnalysisWizard({ settings, returning = false }: { settings: Wiza
               paying ||
               analysisBusy ||
               (filesLoading && screen === "documents") ||
-              (onPaymentScreen && !paymentLoaded)
+              (onPaymentScreen && (!paymentLoaded || (pixOpen && paymentChecking)))
             }
           >
             {primaryLabel}

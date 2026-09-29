@@ -114,20 +114,34 @@ export type DraftFile = {
   manualCheck?: boolean;
 };
 
-/** Situação do pagamento da análise, como devolvida por GET /api/draft/payment. */
+/** PIX em aberto (QR Code e copia e cola), como devolvido pelo servidor. */
+export type PixState = {
+  transactionId: string;
+  copyPaste: string;
+  /** Imagem do QR Code (data URI). */
+  qrCode: string;
+  expiresAt: string | null;
+  amountCents: number;
+  createdAt: string;
+};
+
+/** Situação do pagamento da análise, como devolvida por GET /api/draft/payment (lida do banco do site). */
 export type PaymentState = {
-  status: "none" | "pending" | "approved" | "rejected" | "cancelled" | "refunded";
+  status: "none" | "pending" | "paid" | "failed" | "cancelled" | "expired" | "refunded";
   method: string | null;
   paidAt: string | null;
-  checkoutUrl: string | null;
   termsAcceptedAt: string | null;
   protocol: string | null;
   /** Resultado da última pré-análise automática gravada no servidor. */
   preAnalysis: PreAnalysisStatus | null;
+  /** PIX aguardando pagamento (só enquanto está em aberto). */
+  pix: PixState | null;
+  /** PIX simulado (modo demonstração). */
+  demo: boolean;
 };
 
 export const TERMS_REQUIRED_MESSAGE = "Para continuar, marque a declaração de aceite.";
-export const PAYMENT_REQUIRED_MESSAGE = "Conclua o pagamento para solicitar a análise.";
+export const PAYMENT_REQUIRED_MESSAGE = "Conclua o pagamento do PIX para solicitar a análise.";
 
 export function draftHeaders(creds: DraftCreds): Record<string, string> {
   return { "x-draft-id": creds.id, "x-draft-token": creds.token };

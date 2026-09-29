@@ -62,7 +62,7 @@ export default function TermosPage() {
         <LegalList
           items={[
             "O pagamento é feito ao final do formulário, depois da revisão das informações e antes do envio da solicitação. A solicitação só é registrada com a confirmação do pagamento.",
-            "O pagamento é feito por Pix ou cartão de crédito, na página do provedor de pagamento (Mercado Pago). O site não recebe nem armazena os dados do cartão.",
+            "O pagamento é feito por PIX: o QR Code e o código copia e cola aparecem na própria tela de pagamento, e o pagamento é feito no aplicativo do seu banco. A cobrança é processada pela BlackCat, e a confirmação do pagamento é automática. O site não recebe dados bancários.",
             "Antes do pagamento, você declara que as informações e os documentos enviados são verdadeiros e pertencem ao solicitante cadastrado. O aceite é registrado com data, hora e a versão destas condições.",
             "O valor corresponde ao serviço de análise documental e não depende do resultado da análise.",
             "Por se tratar de contratação pela internet, você pode desistir em até 7 (sete) dias da contratação, nos termos do art. 49 do Código de Defesa do Consumidor, pelos canais de atendimento informados no site.",

@@ -61,8 +61,8 @@ export async function POST(req: Request) {
   };
 
   try {
-    // A confirmação do pagamento pode ainda não ter chegado: consulta o gateway antes de enviar.
-    await syncDraftPayments(draft.id, { finalize: false });
+    // A confirmação do pagamento pode ainda não ter chegado: confere a situação (com a consulta de reserva ao gateway).
+    await syncDraftPayments(draft.id, { finalize: false, manual: true });
     const result = await submitCase({ draftId: draft.id, isDemo: draft.isDemo, data: parsed.data, ip, userAgent: ua });
     await logAccess({ action: "case.submit", ip, userAgent: ua, targetType: "case", targetId: result.caseId });
     await setTrackingSession(result.caseId);

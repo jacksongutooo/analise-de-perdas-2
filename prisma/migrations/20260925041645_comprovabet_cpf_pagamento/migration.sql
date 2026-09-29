@@ -15,8 +15,8 @@ CREATE TYPE "payment_status" AS ENUM ('not_applicable', 'pending', 'awaiting_con
 -- the enum.
 
 
-ALTER TYPE "case_status" ADD VALUE 'awaiting_payment';
-ALTER TYPE "case_status" ADD VALUE 'payment_confirmed';
+ALTER TYPE "case_status" ADD VALUE IF NOT EXISTS 'awaiting_payment';
+ALTER TYPE "case_status" ADD VALUE IF NOT EXISTS 'payment_confirmed';
 
 -- AlterEnum
 ALTER TYPE "document_category" ADD VALUE 'comprovabet';

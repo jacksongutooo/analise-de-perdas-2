@@ -1,52 +1,81 @@
-// Contrato dos provedores de pagamento. Hoje: Mercado Pago (real) e demonstração (simulado, só com DEMO_MODE).
+// Contrato do gateway de pagamento. Hoje: BlackCat (PIX) e, só com DEMO_MODE, o PIX simulado da demonstração.
+// Este arquivo não tem dependências do servidor (usado também no navegador).
 
-export type PaymentStatusValue = "pending" | "approved" | "rejected" | "cancelled" | "refunded";
+/** Status interno do pagamento: equivalentes a PENDING, PAID, FAILED, CANCELLED e EXPIRED (e REFUNDED, estorno). */
+export type PaymentStatusValue = "pending" | "paid" | "failed" | "cancelled" | "expired" | "refunded";
+
+export type PaymentProviderId = "blackcat" | "demo";
 
 /** Valor usado só na demonstração quando ANALYSIS_PRICE não está configurado. */
 export const DEMO_PRICE_CENTS = 9_700;
 
-export type CheckoutInput = {
-  /** Id do nosso registro de pagamento: vai como referência externa para conciliar com o gateway. */
-  paymentId: string;
+export type PixChargeInput = {
+  /** Referência única interna do pedido (externalRef): concilia a transação do gateway com o nosso registro. */
+  externalRef: string;
+  /** Valor em centavos, sempre definido pelo servidor. */
   amountCents: number;
-  description: string;
-  payer: { name: string; email: string };
-  /** Para onde o cliente volta depois de pagar (ou desistir). */
-  returnUrl: string;
-  /** Endereço das notificações do gateway (webhook), quando o site tem endereço público. */
-  notificationUrl: string | null;
+  /** Nome do item na cobrança (serviço digital). */
+  title: string;
+  customer: { name: string; email: string; phone: string; cpf: string };
+  /** Endereço das notificações (webhook), quando o site tem endereço público (https). */
+  postbackUrl: string | null;
+  expiresInDays: number;
 };
 
-export type ProviderPayment = {
-  providerPaymentId: string;
+/** Cobrança PIX criada no gateway. */
+export type PixCharge = {
+  transactionId: string;
   status: PaymentStatusValue;
-  statusDetail: string | null;
-  method: string | null;
-  paidAt: Date | null;
+  /** Status como veio do gateway (ex.: PENDING). */
+  providerStatus: string | null;
   amountCents: number | null;
-  /** Referência externa enviada no checkout (id do nosso registro de pagamento). */
-  reference: string | null;
+  /** Código PIX copia e cola. */
+  copyPaste: string;
+  /** QR Code como imagem (data URI), quando o gateway devolve a imagem. */
+  qrCodeImage: string | null;
+  expiresAt: Date | null;
+  /** Dados da resposta guardados para auditoria (sem dados do cliente). */
+  audit: Record<string, unknown>;
+};
+
+/** Situação de uma transação consultada no gateway: é a confirmação real do pagamento. */
+export type ProviderTransaction = {
+  transactionId: string;
+  status: PaymentStatusValue;
+  providerStatus: string | null;
+  paymentMethod: string | null;
+  amountCents: number | null;
+  paidAt: Date | null;
+  audit: Record<string, unknown>;
 };
 
 export interface PaymentProviderAdapter {
-  id: "mercadopago" | "demo";
-  /** Nome exibido ao cliente e à equipe. */
+  id: "blackcat" | "demo";
+  /** Nome exibido à equipe. */
   label: string;
-  createCheckout(input: CheckoutInput): Promise<{ checkoutId: string; checkoutUrl: string }>;
-  /** Pagamento mais relevante ligado à referência (aprovado, se houver; senão o mais recente). */
-  findByReference(reference: string): Promise<ProviderPayment | null>;
-  getPayment(providerPaymentId: string): Promise<ProviderPayment | null>;
+  createPixCharge(input: PixChargeInput): Promise<PixCharge>;
+  /** Consulta a transação no gateway. null: transação não encontrada (ou sem consulta, na demonstração). */
+  getTransaction(transactionId: string): Promise<ProviderTransaction | null>;
 }
 
+export const PROVIDER_LABEL: Record<PaymentProviderId, string> = {
+  blackcat: "BlackCat",
+  demo: "Pagamento de demonstração",
+};
+
+export function providerLabel(id: string): string {
+  return PROVIDER_LABEL[id as PaymentProviderId] ?? id;
+}
+
+/** Formas de pagamento aceitas. */
 export const PAYMENT_METHOD_LABEL: Record<string, string> = {
-  pix: "Pix",
-  credit_card: "Cartão de crédito",
-  debit_card: "Cartão de débito",
-  prepaid_card: "Cartão pré-pago",
-  account_money: "Saldo Mercado Pago",
+  pix: "PIX",
 };
 
 export function paymentMethodLabel(method: string | null | undefined): string {
   if (!method) return "—";
-  return PAYMENT_METHOD_LABEL[method] ?? method;
+  return PAYMENT_METHOD_LABEL[method.toLowerCase()] ?? method;
 }
+
+/** Mensagem ao cliente quando a cobrança não pode ser criada (o erro técnico fica só no log do servidor). */
+export const PIX_ERROR_MESSAGE = "Não foi possível gerar o PIX agora. Tente novamente em alguns instantes.";

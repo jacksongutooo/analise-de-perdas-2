@@ -197,19 +197,22 @@ export const PAYMENT_STATUS_TONE: Record<PaymentStatusValue, Tone> = {
 };
 
 /** Cada tentativa de pagamento no gateway (tabela payments). */
-export const PAYMENT_ATTEMPT_LABEL: Record<"pending" | "approved" | "rejected" | "cancelled" | "refunded", string> = {
+/** Status interno de cada cobrança (PENDING, PAID, FAILED, CANCELLED, EXPIRED e REFUNDED). */
+export const PAYMENT_ATTEMPT_LABEL: Record<"pending" | "paid" | "failed" | "cancelled" | "expired" | "refunded", string> = {
   pending: "Aguardando pagamento",
-  approved: "Aprovado",
-  rejected: "Recusado",
-  cancelled: "Não concluído",
+  paid: "Pago",
+  failed: "Falhou",
+  cancelled: "Cancelado",
+  expired: "Expirado",
   refunded: "Estornado",
 };
 
 export const PAYMENT_ATTEMPT_TONE: Record<keyof typeof PAYMENT_ATTEMPT_LABEL, Tone> = {
   pending: "warn",
-  approved: "ok",
-  rejected: "danger",
+  paid: "ok",
+  failed: "danger",
   cancelled: "neutral",
+  expired: "neutral",
   refunded: "neutral",
 };
 

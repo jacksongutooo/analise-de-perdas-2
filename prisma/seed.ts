@@ -1,5 +1,5 @@
 // Dados FICTÍCIOS de demonstração. Só roda com DEMO_MODE=true e fora de produção.
-// Os casos ficam em src/lib/demo/seed.ts (compartilhados com a prévia navegável).
+// Os casos ficam em lib/demo/seed.ts (compartilhados com a prévia navegável).
 import "../scripts/load-env";
 import { prisma } from "../lib/db";
 import { DEMO_PASSWORD, seedDemoData } from "../lib/demo/seed";

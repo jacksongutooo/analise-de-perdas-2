@@ -127,8 +127,8 @@ type DemoCase = {
   /** Arquivos do fluxo anterior (antes do ComprovaBet): só no caso de compatibilidade. */
   legacyDocs?: CsvDoc[];
   events: DemoEvent[];
-  /** Pagamento da análise feito antes da solicitação (padrão: Pix aprovado na primeira tentativa). */
-  payment?: { method: "pix" | "credit_card"; rejectedFirst?: boolean };
+  /** Pagamento da análise por PIX, feito antes da solicitação (padrão: pago no primeiro PIX gerado). */
+  payment?: { expiredFirst?: boolean };
   legacyFlow?: CaseStatus[];
   confirmIdentified?: boolean;
   validated?: number;
@@ -210,7 +210,7 @@ export const DEMO_CASES: DemoCase[] = [
     declared: { deposits: R(42000), withdrawals: R(12000), balance: 0 },
     comprovabet: { file: `comprovabet_${YEAR}.pdf`, cpf: "full" },
     events: [],
-    payment: { method: "pix", rejectedFirst: true },
+    payment: { expiredFirst: true },
   },
   {
     protocol: "DEMO-100009",
@@ -228,7 +228,6 @@ export const DEMO_CASES: DemoCase[] = [
     declared: { deposits: R(16000), withdrawals: R(4000), balance: 0 },
     comprovabet: { file: `comprovabet-${YEAR}-iris.pdf`, cpf: "full" },
     events: [{ kind: "start" }],
-    payment: { method: "credit_card" },
   },
   {
     protocol: "DEMO-100003",
@@ -319,7 +318,6 @@ export const DEMO_CASES: DemoCase[] = [
     declared: { deposits: R(1800), withdrawals: R(1500), balance: 0 },
     comprovabet: { file: `comprovabet-${YEAR}-eva.pdf`, cpf: "full" },
     events: [{ kind: "start" }, { kind: "finish", to: "not_eligible", message: "Análise documental concluída." }],
-    payment: { method: "credit_card" },
     confirmIdentified: true,
   },
   {
@@ -444,8 +442,9 @@ export async function seedDemoData(): Promise<SeededCase[]> {
     // Fluxo atual: aceite das condições e pagamento aprovados minutos antes da solicitação.
     const termsAt = new Date(createdAt.getTime() - 4 * 60_000);
     const paidAt = new Date(createdAt.getTime() - 2 * 60_000);
-    const pay = demo.payment ?? { method: "pix" as const };
-    const providerPaymentId = `DEMO-${pay.method === "pix" ? "PIX" : "CARTAO"}-${String(index + 1).padStart(4, "0")}`;
+    const pay = demo.payment ?? {};
+    const seq = String(index + 1).padStart(4, "0");
+    const providerTransactionId = `DEMO-PIX-${seq}`;
     const c = await prisma.case.create({
       data: {
         protocol: demo.protocol,
@@ -468,7 +467,7 @@ export async function seedDemoData(): Promise<SeededCase[]> {
           ? {}
           : {
               paymentConfirmedAt: paidAt,
-              paymentReference: ["Pagamento de demonstração", paymentMethodLabel(pay.method), providerPaymentId].join(" · "),
+              paymentReference: ["Pagamento de demonstração", paymentMethodLabel("pix"), providerTransactionId].join(" · "),
             }),
         assignedAdminId: hasFlow ? reviewerId : null,
         nextSteps: demo.nextSteps ?? null,
@@ -526,18 +525,23 @@ export async function seedDemoData(): Promise<SeededCase[]> {
 
     if (!legacy) {
       const amount = centsToDecimal(config.analysisPriceCents ?? DEMO_PRICE_CENTS);
-      if (pay.rejectedFirst) {
+      if (pay.expiredFirst) {
+        // Primeiro PIX gerado e não pago (venceu); o segundo foi pago.
+        const firstAt = new Date(paidAt.getTime() - 26 * 3_600_000);
         await prisma.payment.create({
           data: {
             caseId: c.id,
             provider: "demo",
-            status: "rejected",
-            statusDetail: "recusado pelo emissor do cartão (demonstração)",
+            status: "expired",
+            statusDetail: "PIX expirado sem pagamento",
             amount,
-            method: "credit_card",
-            providerPaymentId: `DEMO-CARTAO-${String(index + 1).padStart(4, "0")}`,
+            paymentMethod: "pix",
+            externalReference: `AP-DEMO-${seq}-1`,
+            providerTransactionId: `${providerTransactionId}-1`,
+            providerStatus: "EXPIRED",
+            pixExpiresAt: new Date(firstAt.getTime() + 86_400_000),
             isDemo: true,
-            createdAt: new Date(paidAt.getTime() - 90_000),
+            createdAt: firstAt,
           },
         });
       }
@@ -545,10 +549,14 @@ export async function seedDemoData(): Promise<SeededCase[]> {
         data: {
           caseId: c.id,
           provider: "demo",
-          status: "approved",
+          status: "paid",
+          statusDetail: "confirmado na demonstração",
           amount,
-          method: pay.method,
-          providerPaymentId,
+          paymentMethod: "pix",
+          externalReference: `AP-DEMO-${seq}`,
+          providerTransactionId,
+          providerStatus: "PAID",
+          pixExpiresAt: new Date(paidAt.getTime() + 86_340_000),
           paidAt,
           isDemo: true,
           createdAt: new Date(paidAt.getTime() - 60_000),

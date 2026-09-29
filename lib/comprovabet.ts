@@ -51,7 +51,12 @@ export const SERVICE_TERMS_CHECKBOX =
   "Li e estou de acordo com as condições do serviço de análise e confirmo que as informações e documentos enviados são verdadeiros e pertencem ao solicitante cadastrado.";
 
 /** Versão das condições aceitas antes do pagamento. Mude ao alterar o texto acima ou os Termos de Uso. */
-export const SERVICE_TERMS_VERSION = "2026-09-v4";
+export const SERVICE_TERMS_VERSION = "2026-09-v5";
+
+/** Requisitos em letras pequenas na página inicial. */
+export function requirementsText(year: number): string {
+  return `Para solicitar o estorno, é preciso ter o ComprovaBet ${year} em mãos e nunca ter pedido o estorno dessas perdas antes. É possível apenas uma solicitação de estorno por CPF.`;
+}
 
 /** Prazo de retorno da equipe depois do pagamento (em dias úteis). */
 export function contactWithinText(reviewDays: number): string {

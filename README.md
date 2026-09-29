@@ -15,7 +15,7 @@ automática dos documentos, conferência de valores e solicitação de documento
 ## Stack
 
 - **Next.js 15** (App Router, Server Actions, Route Handlers) + **React 19** + **TypeScript**
-- **Tailwind CSS v4** (tokens em `src/app/globals.css`), fonte IBM Plex Sans
+- **Tailwind CSS v4** (tokens em `app/globals.css`), fonte IBM Plex Sans
 - **PostgreSQL** + **Prisma 6** (migrations versionadas em `prisma/migrations`)
 - Armazenamento privado de arquivos: pasta local (desenvolvimento) ou **S3 compatível** (AWS S3, Cloudflare R2, Backblaze B2, MinIO)
 - Leitura de documentos: `papaparse` (CSV), `xlsx` (XLSX), `unpdf` (PDF com texto)
@@ -113,7 +113,7 @@ acessos de demonstração não entram no painel real. O seed se recusa a rodar e
    fortes, `NEXT_PUBLIC_SITE_URL` com o domínio final (https) e os dados da empresa.
 4. Configure o pagamento: `ANALYSIS_PRICE`, `BLACKCAT_API_KEY` e `BLACKCAT_BASE_URL` (veja “Pagamento da análise”
    abaixo). Sem eles, o formulário avisa que o pagamento está indisponível e o painel mostra um alerta.
-5. O comando de build `vercel-build` já executa `prisma migrate deploy`.
+5. O comando de build `vercel-build` já prepara o banco (`scripts/prepare-deploy.mjs`) e executa `prisma migrate deploy`.
 6. Crie o primeiro acesso rodando `npm run admin:create` localmente apontando para o banco de produção.
 7. `vercel.json` agenda a limpeza diária (`/api/cron/cleanup`), que apaga rascunhos abandonados e seus
    arquivos, sessões vencidas e registros de acesso antigos.
@@ -152,7 +152,7 @@ contato em até 15 dias úteis → acompanhamento pelo painel.
   de a análise documental avançar.
 - Arquivos aceitos: **PDF** (preferencial), JPG e PNG, até 5 por envio, com o limite de tamanho de `MAX_UPLOAD_MB`.
   O tipo é conferido pelo conteúdo real do arquivo (não pela extensão).
-- **Conferência automática do CPF** (`src/lib/documents/comprovabet-check.ts`): só acontece quando o PDF tem
+- **Conferência automática do CPF** (`lib/documents/comprovabet-check.ts`): só acontece quando o PDF tem
   texto selecionável. O texto é lido (até 10 páginas), os CPFs são normalizados (só os 11 dígitos) e comparados:
   - CPF cadastrado encontrado → **CPF compatível**;
   - outro CPF completo e válido, sem o cadastrado → **CPF divergente**: o envio é recusado com a mensagem
@@ -167,7 +167,7 @@ contato em até 15 dias úteis → acompanhamento pelo painel.
 ## Pré-análise automática do ComprovaBet
 
 Logo depois do envio, a tela **Pré-análise** mostra uma barra de progresso enquanto o servidor confere o documento
-com as respostas do formulário (`src/lib/documents/pre-analysis-check.ts`, rota `POST /api/draft/analysis`). Cada
+com as respostas do formulário (`lib/documents/pre-analysis-check.ts`, rota `POST /api/draft/analysis`). Cada
 linha mostra o resultado real da conferência:
 
 | Conferência | Aprova quando | Se não confirmar |
@@ -225,7 +225,7 @@ copia e cola aparecem na própria tela: o cliente não sai do site. A chave da A
    prazo (`REVIEW_DAYS`, em **dias úteis**) conta a partir do envio: em até 15 dias úteis a equipe entra em contato
    para apresentar o resultado e, se o caso puder prosseguir, combinar as condições e as formas de pagamento das
    próximas etapas. Dias úteis excluem sábados, domingos, feriados nacionais, Carnaval e Corpus Christi
-   (`src/lib/business-days.ts`).
+   (`lib/business-days.ts`).
 
 **Status internos** (`payments.status`): `pending` (PENDING), `paid` (PAID), `failed` (FAILED), `cancelled`
 (CANCELLED), `expired` (EXPIRED) e `refunded` (estorno). Da BlackCat: `PAID` → `paid`, `PENDING` → `pending`,
@@ -269,10 +269,17 @@ from payments where provider = 'blackcat' and status = 'paid' order by paid_at d
 `status_detail` informa como a confirmação chegou: “confirmado pela BlackCat (webhook transaction.paid)” ou
 “(consulta de status)”. No painel, a seção **Pagamento** do caso lista cada tentativa com a transação e a referência.
 
-Pagamentos antigos do Mercado Pago continuam na tabela (provedor `mercadopago`), com os status renomeados
-(`approved` → `paid`, `rejected` → `failed`). Casos antigos em “Aguardando pagamento” (fluxo anterior, pagamento
-depois da validação) continuam com as instruções enviadas pela equipe, “Já fiz o pagamento” e **Confirmar
-pagamento** no painel.
+Casos antigos em “Aguardando pagamento” (fluxo anterior, pagamento depois da validação) continuam com as
+instruções enviadas pela equipe, “Já fiz o pagamento” e **Confirmar pagamento** no painel.
+
+**Bancos de versões anteriores:** antes de `prisma migrate deploy`, o `vercel-build` roda `scripts/prepare-deploy.mjs`.
+Em um projeto e um banco em dia, ele não faz nada. Ele remove arquivos de versões anteriores que tenham ficado no
+repositório (o upload pelo GitHub não apaga arquivos). Se um deploy anterior deixou uma migration com falha, ela é liberada
+para rodar de novo (no PostgreSQL a falha não deixa efeitos). Se o banco recebeu a migration
+`20260924100000_add_full_review_payments`, de uma versão antiga do projeto, os objetos dela com o mesmo nome dos
+atuais são renomeados (os dados ficam em `payments_versao_anterior`). Em seguida, a migration
+`20260929120000_limpeza_pagamentos_legados` deixa os tipos e as colunas iguais ao schema atual: só `blackcat` e
+`demo` como gateways, status antigos convertidos para os atuais e sobras vazias removidas. Nada com dados é apagado.
 
 ## Os três valores (nunca se misturam)
 
@@ -311,7 +318,7 @@ a equipe escolhe os motivos e escreve a orientação que aparece para o cliente.
 
 ## Leitura automática dos documentos
 
-`src/lib/extraction/` separa leitores (CSV, XLSX, PDF) das regras de classificação:
+`lib/extraction/` separa leitores (CSV, XLSX, PDF) das regras de classificação:
 
 - identifica colunas de data, valor, tipo, status e saldo em planilhas;
 - soma apenas depósitos e saques concluídos (ignora apostas, bônus, estornos, cancelados, recusados e pendentes);
@@ -320,7 +327,7 @@ a equipe escolhe os motivos e escreve a orientação que aparece para o cliente.
 - PDFs precisam ter texto selecionável; **imagens (JPG/PNG) vão para conferência manual**.
 
 Para ler imagens e PDFs digitalizados, conecte um serviço de OCR em `extractFromBuffer`
-(`src/lib/extraction/process.ts`). A leitura automática nunca define o valor validado.
+(`lib/extraction/process.ts`). A leitura automática nunca define o valor validado.
 
 ## LGPD no painel
 
@@ -367,20 +374,20 @@ senhas, validação do conteúdo dos arquivos e a leitura automática de CSV, XL
 - [ ] Revisar **Política de Privacidade** e **Termos de Uso** com assessoria jurídica (os textos são modelos).
 - [ ] Preencher razão social, CNPJ, e-mail de contato e do encarregado (DPO) no `.env`.
 - [ ] Definir o nome/marca em `NEXT_PUBLIC_SITE_NAME` (a imagem de compartilhamento usa esse nome automaticamente).
-- [ ] Trocar o ícone, se houver logotipo próprio: `src/app/icon.svg` e `src/app/apple-icon.png`.
+- [ ] Trocar o ícone, se houver logotipo próprio: `app/icon.svg` e `app/apple-icon.png`.
 - [ ] Usar `AUTH_SECRET` e `CRON_SECRET` fortes e exclusivos de produção.
 - [ ] Confirmar que o bucket está privado e com backup/versionamento conforme a política de retenção.
 - [ ] Testar a leitura automática com históricos reais de cada plataforma e ajustar as regras se necessário.
 - [ ] Testar a conferência do CPF e a pré-análise com ComprovaBets reais (PDF com texto) e conferir `COMPROVABET_YEAR`.
-      Se o documento real usar outros termos, ajuste as regras de tipo e de valores em `src/lib/documents/pre-analysis-check.ts`.
+      Se o documento real usar outros termos, ajuste as regras de tipo e de valores em `lib/documents/pre-analysis-check.ts`.
 - [ ] Configurar o pagamento (`ANALYSIS_PRICE`, `BLACKCAT_API_KEY`, `BLACKCAT_BASE_URL`) e fazer um PIX real de ponta a
       ponta, com valor baixo, antes de divulgar o site. Na primeira notificação real, confira em
-      `payment_events.payload` se o evento e o `transactionId` chegaram (o formato é lido em `src/lib/payments/blackcat.ts`).
+      `payment_events.payload` se o evento e o `transactionId` chegaram (o formato é lido em `lib/payments/blackcat.ts`).
 - [ ] Definir com a assessoria jurídica a política de cancelamento e reembolso (inclusive o direito de
       arrependimento do art. 49 do CDC, citado nos Termos) e revisar o texto das condições do serviço. Ao mudar
-      esse texto, atualize `SERVICE_TERMS_VERSION` em `src/lib/comprovabet.ts`.
+      esse texto, atualize `SERVICE_TERMS_VERSION` em `lib/comprovabet.ts`.
 - [ ] A etapa 7 traz uma linha discreta sobre a autoexclusão oficial (gov.br/autoexclusaoapostas).
-      Remova em `src/components/analysis/steps.tsx` se não fizer sentido para a operação.
+      Remova em `components/analysis/steps.tsx` se não fizer sentido para a operação.
 
 ## Scripts
 
@@ -389,7 +396,7 @@ senhas, validação do conteúdo dos arquivos e a leitura automática de CSV, XL
 | `npm run setup` / `npm run setup:win` | instalação local completa (Linux/macOS e Windows) |
 | `npm run dev` | ambiente de desenvolvimento |
 | `npm run build` / `npm start` | build e execução de produção |
-| `npm run db:deploy` | aplica as migrations |
+| `npm run db:deploy` | prepara o banco (`scripts/prepare-deploy.mjs`) e aplica as migrations |
 | `npm run db:migrate` | cria nova migration em desenvolvimento |
 | `npm run db:seed` | dados fictícios (somente com `DEMO_MODE=true`) |
 | `npm run admin:create -- --email ... --name ...` | cria ou atualiza acesso da equipe (`--role analyst` opcional) |

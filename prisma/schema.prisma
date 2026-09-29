@@ -297,10 +297,9 @@ model CaseDraft {
   @@map("case_drafts")
 }
 
-/// Gateway do pagamento. Atual: BlackCat (PIX). "mercadopago" fica só para o histórico de pagamentos antigos.
+/// Gateway do pagamento: BlackCat (PIX). "demo" é o PIX simulado do modo demonstração.
 enum PaymentProvider {
   blackcat
-  mercadopago
   demo
 
   @@map("payment_provider")
@@ -343,9 +342,6 @@ model Payment {
   pixExpiresAt          DateTime?            @map("pix_expires_at")
   /// Última consulta do status no gateway (limita as consultas de reserva, quando a notificação não chega).
   lastCheckedAt         DateTime?            @map("last_checked_at")
-  /// Pagamentos antigos (Mercado Pago): preferência de checkout.
-  checkoutId            String?              @map("checkout_id")
-  checkoutUrl           String?              @map("checkout_url")
   paidAt                DateTime?            @map("paid_at")
   isDemo                Boolean              @default(false) @map("is_demo")
   createdAt             DateTime             @default(now()) @map("created_at")

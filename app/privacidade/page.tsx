@@ -26,7 +26,7 @@ export default function PrivacidadePage() {
             "Documentos enviados por você, principalmente o ComprovaBet anual e, quando solicitados, documentos complementares (como históricos de depósitos, saques e apostas), que podem conter dados de movimentações financeiras.",
             "Registro do compromisso voluntário: aceite, data e hora, endereço IP e identificação do navegador.",
             "Registro do aceite das condições do serviço antes do pagamento da análise: data e hora, versão do texto, endereço IP e identificação do navegador.",
-            "Dados do pagamento da análise informados pelo provedor de pagamento: situação, forma de pagamento (Pix ou cartão), valor, data e identificador da transação. Os dados do cartão são digitados na página do provedor e não passam pelo site.",
+            "Dados do pagamento da análise (PIX): situação, valor, datas, identificador da transação e referência interna do pedido. O pagamento é feito no aplicativo do seu banco: o site não recebe dados bancários.",
             "Dados técnicos de acesso: endereço IP, data e hora e identificação do navegador, inclusive nos acessos ao acompanhamento.",
           ]}
         />
@@ -64,9 +64,9 @@ export default function PrivacidadePage() {
           quando exigido por lei ou por ordem de autoridade competente.
         </p>
         <p>
-          O pagamento da análise é processado pelo Mercado Pago, que recebe o seu nome, o seu e-mail e o valor para identificar o pagamento e
-          trata os dados de pagamento conforme a política de privacidade própria. Os documentos e as respostas do formulário não são enviados ao
-          provedor de pagamento.
+          O pagamento da análise (PIX) é processado pela BlackCat, que recebe o seu nome, o seu CPF, o seu e-mail, o seu WhatsApp e o valor
+          para gerar a cobrança e identificar o pagamento, e trata esses dados conforme a política de privacidade própria. Os documentos e as
+          respostas do formulário não são enviados ao processador de pagamento.
         </p>
       </LegalSection>
 

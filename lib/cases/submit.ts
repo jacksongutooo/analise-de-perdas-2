@@ -7,7 +7,7 @@ import { runPreAnalysis } from "@/lib/documents/pre-analysis-run";
 import { config } from "@/lib/env";
 import { centsToDecimal, normalizePhoneBR } from "@/lib/format";
 import { COMMITMENT_VERSION, commitmentText } from "@/lib/options";
-import { paymentMethodLabel } from "@/lib/payments/types";
+import { paymentMethodLabel, providerLabel } from "@/lib/payments/types";
 import { generateProtocol } from "@/lib/protocol";
 import { getStorage } from "@/lib/storage";
 import { resolvePlatforms } from "./platforms";
@@ -57,15 +57,15 @@ export async function submitCase(params: {
   if (!cpf) throw new SubmissionError("Informe seu CPF para continuar.", "cpf");
 
   // A análise é paga antes da solicitação: sem pagamento aprovado (e o aceite das condições), não há envio.
-  const payment = await prisma.payment.findFirst({ where: { draftId, status: "approved" }, orderBy: { paidAt: "desc" } });
+  const payment = await prisma.payment.findFirst({ where: { draftId, status: "paid" }, orderBy: { paidAt: "desc" } });
   if (!payment) throw new SubmissionError("Conclua o pagamento para solicitar a análise.", "payment");
   if (!draft?.termsAcceptedAt) throw new SubmissionError("Aceite as condições do serviço na tela de pagamento.", "payment");
   const termsAcceptedAt: Date = draft.termsAcceptedAt;
   const paidAt = payment.paidAt ?? new Date();
   const paymentReference = [
-    payment.provider === "mercadopago" ? "Mercado Pago" : "Pagamento de demonstração",
-    paymentMethodLabel(payment.method),
-    payment.providerPaymentId ?? payment.id,
+    providerLabel(payment.provider),
+    paymentMethodLabel(payment.paymentMethod),
+    payment.providerTransactionId ?? payment.externalReference ?? payment.id,
   ].join(" · ");
 
   const draftDocs = await prisma.document.findMany({

@@ -67,7 +67,7 @@ export async function DELETE(req: Request) {
     const block = await draftPaymentBlock(draft.id);
     const error =
       block === "pending"
-        ? "Há um pagamento em andamento para esta solicitação. Conclua ou aguarde a resposta do pagamento antes de recomeçar."
+        ? "Há um PIX em aberto para esta solicitação. Conclua o pagamento ou aguarde o vencimento do PIX antes de recomeçar."
         : "O pagamento já foi confirmado. Conclua a solicitação.";
     return NextResponse.json({ error, field: "payment" }, { status: 409 });
   }

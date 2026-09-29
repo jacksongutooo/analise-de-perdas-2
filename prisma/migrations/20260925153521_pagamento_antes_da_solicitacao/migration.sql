@@ -1,9 +1,9 @@
--- Pagamento da análise antes do envio da solicitação, pelo gateway (Mercado Pago) ou, em demonstração, simulado.
+-- Pagamento da análise antes do envio da solicitação, pelo gateway ou, em demonstração, simulado.
 -- Só adições: tabela de pagamentos (uma linha por tentativa) e, no rascunho, o aceite das condições e as
 -- respostas gravadas ao iniciar o pagamento. Nenhum dado existente é alterado.
 
 -- CreateEnum
-CREATE TYPE "payment_provider" AS ENUM ('mercadopago', 'demo');
+CREATE TYPE "payment_provider" AS ENUM ('demo');
 
 -- CreateEnum
 CREATE TYPE "payment_attempt_status" AS ENUM ('pending', 'approved', 'rejected', 'cancelled', 'refunded');
@@ -25,8 +25,6 @@ CREATE TABLE "payments" (
     "status_detail" TEXT,
     "amount" DECIMAL(14,2) NOT NULL,
     "method" TEXT,
-    "checkout_id" TEXT,
-    "checkout_url" TEXT,
     "provider_payment_id" TEXT,
     "paid_at" TIMESTAMP(3),
     "is_demo" BOOLEAN NOT NULL DEFAULT false,

@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { IconAlert, IconCheck, IconChevronLeft, IconExternal } from "@/components/icons";
+import { IconAlert, IconCheck, IconChevronLeft } from "@/components/icons";
 import { PageShell } from "@/components/site";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PaymentConsentForm } from "@/components/tracking/PaymentConsentForm";
-import { Notice, buttonClasses } from "@/components/ui";
+import { Notice } from "@/components/ui";
 import { getTrackingCaseId } from "@/lib/auth/tracking";
 import { loadClientCase } from "@/lib/cases/client-view";
 import { PAYMENT_NOTICE } from "@/lib/comprovabet";
-import { config, paymentLinkFor } from "@/lib/env";
+import { config } from "@/lib/env";
 import { formatBRL, formatDateTime } from "@/lib/format";
 import { acceptServiceTerms, informPaymentDone } from "../actions";
 
@@ -24,7 +24,6 @@ export default async function PagamentoPage({ searchParams }: { searchParams: Pr
   if (!data) redirect("/acompanhar");
   // O pagamento só é liberado depois da validação documental.
   if (data.status !== "awaiting_payment") redirect("/acompanhar");
-  const paymentLink = paymentLinkFor(data.protocol);
 
   return (
     <PageShell showTracking={false}>
@@ -70,13 +69,7 @@ export default async function PagamentoPage({ searchParams }: { searchParams: Pr
             </Notice>
           ) : (
             <>
-              {paymentLink ? (
-                <a href={paymentLink} target="_blank" rel="noopener noreferrer" className={buttonClasses("primary", "lg", "w-full")}>
-                  Ir para o pagamento <IconExternal size={18} />
-                </a>
-              ) : (
-                <Notice tone="info">Nossa equipe enviará as instruções de pagamento pelo WhatsApp ou e-mail cadastrados.</Notice>
-              )}
+              <Notice tone="info">Nossa equipe enviará as instruções de pagamento pelo WhatsApp ou e-mail cadastrados.</Notice>
               <form action={informPaymentDone}>
                 <SubmitButton variant="secondary" size="lg" className="w-full">
                   Já fiz o pagamento

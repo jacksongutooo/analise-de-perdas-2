@@ -4,14 +4,14 @@ import { config } from "@/lib/env";
 import { analysisPrice, paymentProvider } from "@/lib/payments";
 
 export const metadata: Metadata = { title: "Iniciar análise" };
+// Valor e disponibilidade do PIX lidos do servidor a cada acesso: a tela mostra sempre o valor que será cobrado.
+export const dynamic = "force-dynamic";
 
-export default async function AnalisePage({ searchParams }: { searchParams: Promise<{ pagamento?: string }> }) {
-  const sp = await searchParams;
+export default function AnalisePage() {
   const provider = paymentProvider();
   const price = analysisPrice();
   return (
     <AnalysisWizard
-      returning={sp.pagamento === "retorno"}
       settings={{
         maxUploadMb: config.maxUploadMb,
         reviewDays: config.reviewDays,
@@ -21,10 +21,8 @@ export default async function AnalisePage({ searchParams }: { searchParams: Prom
           priceCents: price?.cents ?? null,
           note:
             provider?.id === "demo"
-              ? `Pix ou cartão de crédito. Nesta demonstração, o pagamento é simulado${price?.example ? " e o valor é de exemplo" : ""}.`
-              : provider?.id === "mercadopago"
-                ? "Pix ou cartão de crédito, com pagamento processado pelo Mercado Pago. Os dados do cartão não passam pelo site."
-                : "Pix ou cartão de crédito.",
+              ? `O QR Code e o código PIX copia e cola aparecem nesta tela. Nesta demonstração, o PIX é simulado e nenhum valor é cobrado${price?.example ? " (valor de exemplo)" : ""}.`
+              : "O QR Code e o código PIX copia e cola aparecem nesta tela. O pagamento é processado pela BlackCat e a confirmação é automática.",
         },
       }}
     />

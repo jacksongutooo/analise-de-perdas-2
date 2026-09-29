@@ -91,9 +91,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         confirmadoEm: c.paymentConfirmedAt?.toISOString() ?? null,
         transacoes: c.payments.map((p) => ({
           provedor: providerLabel(p.provider),
-          forma: paymentMethodLabel(p.method),
+          forma: paymentMethodLabel(p.paymentMethod),
           situacao: PAYMENT_ATTEMPT_LABEL[p.status],
           valor: reais(p.amount),
+          transacao: p.providerTransactionId,
+          referenciaInterna: p.externalReference,
           iniciadaEm: p.createdAt.toISOString(),
           pagaEm: p.paidAt?.toISOString() ?? null,
         })),
