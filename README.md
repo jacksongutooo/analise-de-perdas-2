@@ -430,3 +430,4 @@ senhas, validação do conteúdo dos arquivos e a leitura automática de CSV, XL
 | `npm test` | testes automatizados |
 | `npm run typecheck` | checagem de tipos |
 | `npm run previa` | gera a prévia navegável (`previa/index.html`) |
+
